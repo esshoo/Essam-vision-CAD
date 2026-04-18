@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Essam-CAD-PDF-3D-VR</title>
+
+  <meta name="theme-color" content="#111111" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Essam CAD" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+
+  <link rel="stylesheet" href="./global.css" />
+  <link rel="stylesheet" href="./iconfont/iconfont.css" />
+  <link rel="stylesheet" href="./iconfont/iconfont2.css" />
+  <script src="./libs/pdf/pdf.min.js"></script>
+
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #111; }
+    #myCanvas { width: 100vw; height: 100vh; }
+  </style>
+
+  <!-- Import map: x-viewer + three -->
+  <script type="importmap">
+    {
+      "imports": {
+        "@x-viewer/core": "./libs/x-viewer/core/dist/index.esm.js",
+        "@x-viewer/plugins": "./libs/x-viewer/plugins/dist/index.esm.js",
+        "@x-viewer/ui": "./libs/x-viewer/ui/dist/index.esm.js"
+      }
+    }
+  </script>
+</head>
+
+<body>
+  <div id="myCanvas"></div>
+
+  <script type="module">
+    import { CADViewerApp } from "./addons/cad-toolkit/viewer/CADViewer_app.js";
+
+    const app = new CADViewerApp("myCanvas", {
+      // IMPORTANT: keep x-viewer toolbar + bottom bar ON
+      minimalUI: false,
+      // IMPORTANT: do NOT show x-viewer built-in layers window (we replace it with our panel)
+      replaceToolbarLayers: true,
+    });
+
+    await app.init();
+    window.cadApp = app;
+
+    console.log("Ready. Use toolbar normally. Layers button opens our panel.");
+  </script>
+
+  <!-- Floating translucent menu (Open / Layers / 3D) -->
+  <script type="module" src="./addons/cad-toolkit/ui/FloatingFabMenu.js"></script>
+
+  <!-- Draggable/resizable Rules panel (hidden until opened) -->
+  <script type="module" src="./addons/cad-toolkit/ui/LayerRulesPanel.js"></script>
+  <!-- Pen / annotations overlay -->
+  <script type="module" src="./addons/cad-toolkit/ui/DrawingOverlay.js"></script>
+
+
+  <!-- 3D bridge (no buttons; controlled by toolbar/fab) -->
+  <script type="module" src="./addons/cad-toolkit/renderers/three/CAD3DBridge.js"></script>
+
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', async () => {
+        try {
+          const registration = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+          console.log('[PWA] Service worker registered:', registration.scope);
+        } catch (error) {
+          console.error('[PWA] Service worker registration failed:', error);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
