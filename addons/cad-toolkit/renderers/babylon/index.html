@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Essam Babylon CAD Viewer (Merged UI)</title>
+  <style>
+    html, body { width:100%; height:100%; margin:0; overflow:hidden; background:#000; font-family:Tahoma, Arial, sans-serif; }
+    #renderCanvas { width:100%; height:100%; touch-action:none; display:block; }
+    
+    /* تنسيق العناصر داخل القائمة */
+    .row{ display:flex; gap:10px; align-items:center; justify-content:space-between; margin:8px 0; }
+    .small{ font-size:12px; opacity:.9; }
+    input[type="range"]{ width:100%; cursor: pointer; }
+    
+    button{
+      padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,.2);
+      background:rgba(255,255,255,.1); color:#fff; cursor:pointer; flex:1;
+      font-size: 13px;
+    }
+    button:hover{ background:rgba(255,255,255,.2); }
+    .danger{ color:#ffb3b3; }
+    hr { border: 0; border-top: 1px solid rgba(255,255,255,0.2); margin: 15px 0; }
+  
+    #crosshair{
+      position:fixed; left:50%; top:50%; transform:translate(-50%,-50%);
+      width:26px; height:26px; line-height:26px; text-align:center;
+      color:rgba(255,255,255,.85); font-size:22px; z-index:9998;
+      pointer-events:none; display:none; text-shadow:0 0 8px rgba(0,0,0,.9);
+    }
+
+    /* زر القائمة العائم */
+    #menuBtn{
+      position:fixed; top:14px; right:14px; z-index:10000;
+      width:44px; height:44px; border-radius:12px; flex:none;
+      border:1px solid rgba(255,255,255,.2);
+      background:rgba(0,0,0,.6); color:#fff; cursor:pointer;
+      font-size:22px; display:flex; align-items:center; justify-content:center;
+      user-select:none; backdrop-filter: blur(4px);
+    }
+
+    /* القائمة المدمجة */
+    #menu{
+      position:fixed; top:65px; right:14px; z-index:10000;
+      width:300px; /* عرض أكبر لاستيعاب المحتوى */
+      max-height: 85vh; /* لضمان عدم خروجها عن الشاشة */
+      overflow-y: auto; /* إضافة سكرول إذا طالت القائمة */
+      border-radius:14px;
+      background:rgba(0,0,0,.85); 
+      border:1px solid rgba(255,255,255,.15);
+      padding:15px; 
+      display:none; /* مخفية في البداية */
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      backdrop-filter: blur(10px);
+      color: #fff;
+    }
+    
+    /* تحسين شكل السكرول بار */
+    #menu::-webkit-scrollbar { width: 6px; }
+    #menu::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); }
+    #menu::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
+
+  </style>
+
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <script src="https://cdn.babylonjs.com/gui/babylon.gui.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/earcut@2.2.4/dist/earcut.min.js"></script>
+
+  <script src="EssamBabylonBuilderjson.js"></script>
+  <script src="EssambabylonMeasureTool.js"></script>
+</head>
+<body>
+  <canvas id="renderCanvas"></canvas>
+  <div id="crosshair">+</div>
+
+  <button id="menuBtn" title="القائمة">☰</button>
+
+  <div id="menu">
+    
+    <div class="row"><strong>الأدوات</strong></div>
+    <div class="row">
+      <button id="modeMove">تحريك ✋</button>
+      <button id="modeMeasure">قياس 📏</button>
+    </div>
+    <div class="row">
+      <button id="modeVR">نظارة VR 🥽</button>
+    </div>
+
+    <hr/> 
+
+    <div class="row"><strong>الحالة:</strong> <span id="status" style="color:#0f0">جاهز</span></div>
+    <div id="hint" class="small" style="color:#ffb3b3; margin-bottom:5px;"></div>
+    
+    <div class="row small" style="background:rgba(255,255,255,0.05); padding:5px; border-radius:5px;">
+      <div>Meshes: <span id="meshCount">0</span></div>
+      <div>Lights: <span id="lightCount">0</span></div>
+      <div>ThinInst: <span id="thinCount">0</span></div>
+    </div>
+
+    <div class="row" style="margin-top:15px;">
+      <input id="fileInput" type="file" accept=".json,application/json" style="width:100%"/>
+    </div>
+
+    <hr/>
+
+    <div>
+      <div class="row"><strong>إضاءة (ليل/نهار)</strong><span class="small" id="sunVal">1.00</span></div>
+      <input id="sunSlider" type="range" min="0" max="2" step="0.01" value="1"/>
+      <div class="row">
+        <button id="btnNight">ليل 🌙</button>
+        <button id="btnDay">نهار ☀️</button>
+      </div>
+      <div class="row"><button id="btnFit" style="width:100%">إعادة تمركز الكاميرا 🎯</button></div>
+    </div>
+
+    <hr/>
+
+    <div>
+      <div class="row"><strong>وحدة CAD (XZ)</strong><span class="small" id="unitVal">—</span></div>
+      <input id="unitSlider" type="range" min="0.000001" max="1" step="0.000001" value="0.001"/>
+      <div class="row">
+        <button id="btnUnitAuto">تلقائي ✨</button>
+        <button id="btnUnit1">1.0</button>
+        <button id="btnUnitCM">CM</button>
+        <button id="btnUnitMM">MM</button>
+      </div>
+      <div class="small" style="opacity:.7; margin-top:4px;">* يتم الكشف تلقائياً عند التحميل</div>
+    </div>
+
+    <hr/>
+
+    <div>
+      <div class="row"><strong>تكبير/تصغير عام</strong><span class="small" id="gScaleVal">1.00×</span></div>
+      <input id="gScaleSlider" type="range" min="0.1" max="20" step="0.01" value="1"/>
+      <div class="row">
+        <button id="btnG1">1×</button>
+        <button id="btnG2">2×</button>
+        <button id="btnG5">5×</button>
+        <button id="btnG10">10×</button>
+      </div>
+    </div>
+
+    <div style="margin-top:20px; text-align:center; opacity:0.3; font-size:10px;">
+      v<span id="bver"></span> | m<span id="mver"></span>
+    </div>
+
+  </div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const statusEl = $("status");
+  const meshCountEl = $("meshCount");
+  const lightCountEl = $("lightCount");
+  const entCountEl = null; // لم يعد ضرورياً عرضه
+  const thinCountEl = $("thinCount");
+  const hintEl = $("hint");
+  const sunValEl = $("sunVal");
+
+  function setStatus(t){ statusEl.textContent = t; }
+  function setHint(t){ hintEl.textContent = t || ""; }
+
+  // Check Dependencies
+  if (typeof BABYLON === "undefined") {
+    setStatus("Error: Babylon Missing");
+    return;
+  }
+  const bverEl = $("bver"); if (bverEl) bverEl.textContent = (window.__ESSAM_BUILDER_VERSION || "?");
+  const mverEl = $("mver"); if (mverEl) mverEl.textContent = (window.__ESSAM_MEASURE_VERSION || "?");
+
+  let currentJson = null;
+  const canvas = $("renderCanvas");
+  const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+  const scene = new BABYLON.Scene(engine);
+  scene.clearColor = new BABYLON.Color3(0,0,0);
+
+  const camera = new BABYLON.ArcRotateCamera("cam", -Math.PI/2, Math.PI/3, 40, BABYLON.Vector3.Zero(), scene);
+  camera.attachControl(canvas, true);
+  // Smoother zoom on mouse + touch (avoid big jumps)
+  camera.lowerRadiusLimit = 0.01;
+  camera.upperRadiusLimit = 2000000;
+  camera.wheelDeltaPercentage = 0.01; // 1% of radius per wheel step
+  camera.pinchDeltaPercentage = 0.01; // 1% per pinch frame
+  camera.inertia = 0.85;
+
+  const hemi = new BABYLON.HemisphericLight("bootHemi", new BABYLON.Vector3(0,1,0), scene);
+  hemi.intensity = 0.8;
+
+  // Test box
+  const box = BABYLON.MeshBuilder.CreateBox("testBox", {size:1}, scene);
+  box.position.y = 0.5;
+
+  const gui = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI("ui");
+  const builder = new EssamBabylonBuilder(scene);
+  const measureTool = new EssambabylonMeasureTool(scene, camera, gui);
+
+  // --- Menu / Modes ---
+  const menuBtn = document.getElementById("menuBtn");
+  const menu = document.getElementById("menu");
+  const crosshair = document.getElementById("crosshair");
+  let xrHelper = null;
+
+  function setMode(mode){
+    // Crosshair (+) visibility is controlled inside measure tool.
+    if (mode === "measure") measureTool.enable();
+    else measureTool.disable();
+    if (crosshair) crosshair.style.display = "none";
+  }
+
+async function enterVR(){
+    try{
+      if (!xrHelper) {
+        const floor = scene.getMeshByName("groundHelper") || scene.meshes[0];
+
+        xrHelper = await scene.createDefaultXRExperienceAsync({
+          disableDefaultUI: true,
+          floorMeshes: floor ? [floor] : undefined
+        });
+
+        // Pass XR helper to measure tool (for controller-ray measuring)
+        if (measureTool && typeof measureTool.setXRHelper === "function") {
+          measureTool.setXRHelper(xrHelper);
+        }
+
+        // Ensure teleportation is configured
+        if (xrHelper.teleportation) {
+          xrHelper.teleportation.rotationEnabled = true;
+          if (floor) xrHelper.teleportation.addFloorMesh(floor);
+        }
+
+        // Enable joystick movement (in addition to teleport) if available
+        try {
+          const fm = xrHelper.baseExperience.featuresManager;
+          // Disable hand tracking feature to avoid "hand + controller" duplication where possible
+          try { fm.disableFeature(BABYLON.WebXRFeatureName.HAND_TRACKING); } catch(e) {}
+          try {
+            fm.enableFeature(BABYLON.WebXRFeatureName.MOVEMENT, "latest", {
+              xrInput: xrHelper.input,
+              movementSpeed: 1.6,
+              rotationSpeed: 45
+            });
+          } catch(e) {}
+        } catch(e) {}
+
+        // Detach arc camera controls in XR, re-attach when exiting
+        xrHelper.baseExperience.onStateChangedObservable.add((state) => {
+          try {
+            if (state === BABYLON.WebXRState.IN_XR) {
+              camera.detachControl(canvas);
+            } else if (state === BABYLON.WebXRState.NOT_IN_XR) {
+              camera.attachControl(canvas, true);
+            }
+          } catch(e) {}
+        });
+      }
+
+      await xrHelper.baseExperience.enterXRAsync("immersive-vr", "local-floor");
+    } catch(err){
+      console.warn("XR failed:", err);
+      alert("VR غير مدعوم أو يحتاج HTTPS");
+    }
+  }
+
+  menuBtn?.addEventListener("click", () => {
+    menu.style.display = (menu.style.display === "block") ? "none" : "block";
+  });
+  
+  // إخفاء القائمة عند اختيار أداة لتسهيل الرؤية
+  $("modeMove")?.addEventListener("click", () => { setMode("move"); menu.style.display="none"; });
+  $("modeMeasure")?.addEventListener("click", () => { setMode("measure"); menu.style.display="none"; });
+  $("modeVR")?.addEventListener("click", async () => { menu.style.display="none"; await enterVR(); });
+
+  function updateCounts(){
+    meshCountEl.textContent = String(scene.meshes.length);
+    lightCountEl.textContent = String(scene.lights.length);
+    thinCountEl.textContent = String(builder.totalThinInstances || 0);
+  }
+
+  function fitCamera() {
+    const gb = scene.metadata?.generatedBounds;
+    let minV = null, maxV = null;
+    if (gb && gb.bMin && gb.bMax) {
+      minV = new BABYLON.Vector3(gb.bMin.x, gb.bMin.y, gb.bMin.z);
+      maxV = new BABYLON.Vector3(gb.bMax.x, gb.bMax.y, gb.bMax.z);
+    } else {
+      // fallback
+      let min = new BABYLON.Vector3(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+      let max = new BABYLON.Vector3(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY);
+      const meshes = scene.meshes.filter(m => m && m.metadata && m.metadata.role === "generated");
+      if (!meshes.length) return;
+      meshes.forEach(m => {
+        m.computeWorldMatrix(true);
+        const bi = m.getBoundingInfo();
+        if (!bi) return;
+        const bb = bi.boundingBox;
+        min = BABYLON.Vector3.Minimize(min, bb.minimumWorld);
+        max = BABYLON.Vector3.Maximize(max, bb.maximumWorld);
+      });
+      if (!isFinite(min.x)) return;
+      minV = min; maxV = max;
+    }
+    const center = minV.add(maxV).scale(0.5);
+    const sz = maxV.subtract(minV);
+    const sizeMax = Math.max(sz.x, sz.y, sz.z);
+    const diag = Math.hypot(sz.x, sz.y, sz.z) || 1;
+
+    const radius = Math.max(2, sizeMax * 1.25 + 0.5);
+    camera.target = center;
+    camera.alpha = -Math.PI / 2;
+    camera.beta  = Math.PI / 3;
+    camera.radius = radius;
+    camera.minZ = Math.max(0.00001, diag / 1000000);
+    camera.maxZ = Math.max(20000, diag * 2000);
+    // Keep zoom smooth and predictable (avoid jump-to-inside issues)
+    camera.wheelPrecision = 15;
+    camera.pinchPrecision = 15;
+    camera.wheelDeltaPercentage = 0.01;
+    camera.pinchDeltaPercentage = 0.01;
+  }
+
+  const sunSlider = $("sunSlider");
+  function setSun(v){
+    const val = Number(v);
+    sunValEl.textContent = val.toFixed(2);
+    if (builder.updateSunIntensity) builder.updateSunIntensity(val);
+  }
+  sunSlider.addEventListener("input", () => setSun(sunSlider.value));
+  $("btnNight").onclick = () => { sunSlider.value="0.12"; setSun(sunSlider.value); };
+  $("btnDay").onclick = () => { sunSlider.value="1.00"; setSun(sunSlider.value); };
+  $("btnFit").onclick = () => fitCamera();
+
+  // --- CAD Units ---
+  const unitSlider = $("unitSlider");
+  const unitValEl = $("unitVal");
+
+function setUnit(v, doRebuild=true){
+    const val = Math.max(0.000001, Number(v) || 1);
+    unitValEl.textContent = val.toFixed(6) + " m/unit";
+    if (currentJson) {
+      currentJson.settings = currentJson.settings || {};
+      currentJson.settings.overrideMetersPerCadUnit = val;
+      if (doRebuild) {
+        setStatus("بناء...");
+        setTimeout(() => {
+            builder.build(currentJson);
+            fitCamera();
+            
+            // >>>> بداية التعديل: حساب المقياس الكلي (Global * Unit) <<<<
+            // نضرب مقياس الرسم العام في قيمة الوحدة الجديدة
+            const globalS = currentJson.settings.globalScale || 1.0;
+            const finalScale = globalS * val; 
+            
+            if (measureTool && measureTool.setSceneScaleHint) {
+                measureTool.setSceneScaleHint(finalScale);
+            }
+            // >>>> نهاية التعديل <<<<
+
+            setStatus("جاهز");
+        }, 10);
+      }
+    }
+  }
+
+  function autoUnitGuess(json){
+    let u = (json.units && typeof json.units.metersPerCadUnit === "number") ? json.units.metersPerCadUnit : 1.0;
+    try{
+      const rawPts = [];
+      if (Array.isArray(json.entities)) {
+        for (let i=0;i<json.entities.length && rawPts.length<4000;i++){
+          const e = json.entities[i];
+          if (e && e.kind==="POLYLINE" && Array.isArray(e.points) && e.points.length) rawPts.push(...e.points);
+        }
+      }
+      if (rawPts.length){
+        let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+        for (const p of rawPts){
+          if (!p) continue;
+          if (p.x<minX) minX=p.x; if (p.y<minY) minY=p.y;
+          if (p.x>maxX) maxX=p.x; if (p.y>maxY) maxY=p.y;
+        }
+        const spanX = (maxX-minX) * u;
+        const spanZ = (maxY-minY) * u;
+        if (isFinite(spanX) && isFinite(spanZ) && Math.max(spanX, spanZ) < 2) {
+          u = 1.0;
+        }
+      }
+    }catch(e){}
+    return u;
+  }
+
+  $("btnUnitAuto").onclick = () => {
+    if (!currentJson) return;
+    const u = autoUnitGuess(currentJson);
+    unitSlider.value = String(u);
+    setUnit(unitSlider.value, true);
+  };
+  $("btnUnit1").onclick  = () => { unitSlider.value="1"; setUnit(unitSlider.value, true); };
+  $("btnUnitCM").onclick = () => { unitSlider.value="0.01"; setUnit(unitSlider.value, true); };
+  $("btnUnitMM").onclick = () => { unitSlider.value="0.001"; setUnit(unitSlider.value, true); };
+  unitSlider.addEventListener("input", () => setUnit(unitSlider.value, false));
+  unitSlider.addEventListener("change", () => setUnit(unitSlider.value, true));
+
+  // --- Global Scale ---
+  const gScaleSlider = $("gScaleSlider");
+  const gScaleValEl = $("gScaleVal");
+  function setGScale(v, doRebuild=true){
+    const val = Math.max(0.000001, Number(v) || 1);
+    gScaleValEl.textContent = val.toFixed(3) + "×";
+    if (currentJson) {
+      currentJson.settings = currentJson.settings || {};
+      currentJson.settings.globalScale = val;
+      if (doRebuild) {
+        setStatus("بناء...");
+        setTimeout(()=>{
+            builder.build(currentJson);
+            fitCamera();
+            if (measureTool && measureTool.setSceneScaleHint) measureTool.setSceneScaleHint(val);
+            setStatus("جاهز");
+        }, 10);
+      }
+    }
+  }
+  gScaleSlider.addEventListener("input", () => setGScale(gScaleSlider.value, false));
+  gScaleSlider.addEventListener("change", () => setGScale(gScaleSlider.value, true));
+  $("btnG1").onclick  = () => { gScaleSlider.value="1"; setGScale(gScaleSlider.value, true); };
+  $("btnG2").onclick  = () => { gScaleSlider.value="2"; setGScale(gScaleSlider.value, true); };
+  $("btnG5").onclick  = () => { gScaleSlider.value="5"; setGScale(gScaleSlider.value, true); };
+  $("btnG10").onclick = () => { gScaleSlider.value="10"; setGScale(gScaleSlider.value, true); };
+
+  // --- File Load ---
+  $("fileInput").addEventListener("change", (ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    setStatus("قراءة...");
+    setHint("");
+    
+    // Auto-open menu so user sees options
+    menu.style.display = "block";
+
+    const reader = new FileReader();
+    reader.onerror = () => { setStatus("فشل القراءة"); };
+    reader.onload = () => {
+      try{
+        setStatus("تحليل JSON...");
+        const json = JSON.parse(reader.result);
+        const tb = scene.getMeshByName("testBox"); if (tb) tb.dispose();
+
+        currentJson = json;
+        
+        // --- AUTO DETECT UNITS HERE (Important Change) ---
+        // بدلاً من استخدام القيمة الافتراضية، نقوم بحساب التلقائي فوراً
+        const autoU = autoUnitGuess(json);
+        unitSlider.value = String(autoU);
+        setUnit(unitSlider.value, false); // Update UI text only, build comes next
+
+        // Settings sync
+        const s = (json.settings && typeof json.settings.sunIntensity === "number") ? json.settings.sunIntensity : 1.0;
+        sunSlider.value = String(s); setSun(s);
+
+        const gsc = (json.settings && typeof json.settings.globalScale === "number") ? json.settings.globalScale : 1.0;
+        gScaleSlider.value = String(gsc); setGScale(gsc, false);
+
+        // Build
+        setStatus("بناء المشهد...");
+        setTimeout(() => {
+            builder.build(json);
+            fitCamera();
+            if (measureTool && measureTool.setSceneScaleHint) measureTool.setSceneScaleHint(gsc);
+            updateCounts();
+            setMode('move');
+            setStatus("جاهز");
+        }, 50);
+
+      }catch(e){
+        console.error(e);
+        setStatus("خطأ ملف");
+        setHint("تأكد من صيغة الملف");
+      }
+    };
+    reader.readAsText(file);
+  });
+
+  engine.runRenderLoop(() => {
+    scene.render();
+    if(scene.meshes.length !== Number(meshCountEl.textContent)) updateCounts();
+  });
+  window.addEventListener("resize", () => engine.resize());
+})();
+</script>
+</body>
+</html>

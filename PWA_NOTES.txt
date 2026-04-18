@@ -1,0 +1,20 @@
+PWA additions:
+- manifest.json
+- sw.js
+- icon-192.png
+- icon-512.png
+- apple-touch-icon.png
+- index.html updated to register the service worker and expose install metadata
+
+How to use:
+1) Serve the project over HTTP/HTTPS (not file:///)
+2) Open once while online or on local network so the service worker can cache the app shell
+3) Install from browser:
+   - Chrome/Edge desktop/mobile: Install App
+   - Safari iPhone/iPad: Share > Add to Home Screen
+   - Safari Mac: File > Add to Dock
+4) After the first successful load and caching, the app should start offline with its bundled files
+
+Note:
+Files the user opens later (external PDFs/DWGs from device/cloud) are not bundled into the install package.
+The app code/assets are bundled and cached offline.
