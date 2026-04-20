@@ -1,0 +1,22 @@
+v25 - 3D build optimization
+
+What changed:
+- Added a geometry preprocessing stage before 3D build.
+- Removes consecutive duplicate points.
+- Removes tiny / zero-length segments.
+- Simplifies points on straight lines to keep only meaningful corners.
+- Batches wall / glass / beam / light segments into merged geometries per material.
+- Batches floor / ceiling wire segments into line-segment groups.
+- Deduplicates snap points.
+- Shrinks the ceiling grid to the model bounds instead of a huge fixed size.
+
+Why this helps:
+- Fewer vertices to read.
+- Fewer segments to extrude.
+- Far fewer draw calls in 3D.
+- Lower memory pressure on mobile / tablet / VR.
+- More performance headroom for later shadows and lighting.
+
+Files changed:
+- addons/cad-toolkit/renderers/three/SceneBuilder.js
+- addons/cad-toolkit/renderers/three/GeometryPreprocessor.js (new)

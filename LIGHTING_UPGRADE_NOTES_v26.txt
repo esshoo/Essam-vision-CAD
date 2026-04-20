@@ -1,0 +1,27 @@
+Lighting/Shadow Upgrade v26
+
+Changed files:
+- addons/cad-toolkit/renderers/three/EssamEngine.js
+- addons/cad-toolkit/renderers/three/SceneBuilder.js
+
+What changed:
+- Enabled renderer shadow maps with PCFSoftShadowMap.
+- Added directional sun shadow tuning.
+- Added shadow catcher floor sized from drawing bounds.
+- Added quality presets: low / medium / high / vr.
+- Added shadow/bloom toggles in 3D UI panel.
+- Added floor/ceiling surface generation from closed entities for better light/shadow reading.
+- Added mesh shadow roles:
+  - solid: cast + receive
+  - glass: receive only
+  - surface: receive only
+  - light: no cast/receive
+
+Expected result:
+- Better depth perception.
+- Better wall/floor shadow reading.
+- Better visual result without fully aggressive lighting.
+
+Notes:
+- Complex/self-intersecting floor or ceiling outlines may still render as lines only in difficult cases.
+- VR preset disables shadows by default for performance.
