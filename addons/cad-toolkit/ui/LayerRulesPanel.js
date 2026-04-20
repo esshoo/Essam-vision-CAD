@@ -181,7 +181,7 @@ function getDefaultsForType(type) {
     if(type === "beams") return { height: 0.5, thickness: 0.2, elevation: 2.5 };
     if(type === "floor") return { thickness: 0.1, elevation: 0.0 };
     if(type === "ceiling") return { thickness: 0.1, elevation: 3.0 };
-    if(type === "lights") return { thickness: 0.1, elevation: 2.8, intensity: 2.0 };
+    if(type === "lights") return { thickness: 0.1, elevation: 2.8, intensity: 2.0, range: 8.0, lightSpacing: 2.4 };
     if(type === "glass" || type === "door") return { height: 2.1, elevation: 0.0 };
     return { height: 0.0, thickness: 0.01, elevation: 0.0 };
 }
@@ -301,7 +301,7 @@ function paramsRow(layer, rule) {
         const chk = el("input", { type: "checkbox", checked: !!rule.hasCeiling, onchange: (e) => { rule.hasCeiling = e.target.checked; } });
         c.appendChild(el("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", marginLeft: "auto" }}, [el("span", { style: { fontSize: "9px", color: "#888" }}, ["AutoCeil"]), chk]));
     }
-    else if(rule.type === "lights") { inp("Elev", "elevation"); inp("Width", "thickness"); inp("Inten", "intensity", "2.0"); }
+    else if(rule.type === "lights") { inp("Elev", "elevation"); inp("Width", "thickness"); inp("Inten", "intensity", "2.0"); inp("Range", "range", "8.0"); inp("Space", "lightSpacing", "2.4"); }
     else if(rule.type === "beams") { inp("Elev", "elevation"); inp("Depth", "height"); inp("Width", "thickness"); }
     else if(rule.type === "door" || rule.type === "glass") { inp("Sill", "elevation"); inp("Height", "height"); }
     else if(rule.type === "floor" || rule.type === "ceiling") { inp("Level", "elevation"); inp("Thick", "thickness"); }

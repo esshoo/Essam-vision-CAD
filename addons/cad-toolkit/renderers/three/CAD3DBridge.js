@@ -9,23 +9,6 @@ export const CAD3DBridge = {
   overlay: null,
   engine: null,
 
-  _setPdfPagerVisible(visible) {
-    const pager = document.getElementById("pdf-pager");
-    if (!pager) return;
-    if (!visible) {
-      if (!pager.dataset.prevDisplay) pager.dataset.prevDisplay = pager.style.display || "flex";
-      pager.style.display = "none";
-      return;
-    }
-    const app = window.cadApp;
-    const pageCount = Number(app?._pdfPageCount || 0);
-    if (pageCount > 1) {
-      pager.style.display = pager.dataset.prevDisplay || "flex";
-    } else {
-      pager.style.display = "none";
-    }
-  },
-
   createOverlay() {
     if (document.getElementById("cad-3d-overlay")) return;
     
@@ -69,7 +52,6 @@ export const CAD3DBridge = {
     canvasContainer.appendChild(crosshair);
 
     document.body.appendChild(this.overlay);
-    this._setPdfPagerVisible(false);
 
     // 5. Initialize Engine
     // The Engine will now create its own Sun Slider inside the container
@@ -83,13 +65,18 @@ export const CAD3DBridge = {
         this.overlay = null; 
         this.engine = null;
     }
-    this._setPdfPagerVisible(true);
   },
 
   loadJSON(json) {
       this.createOverlay();
       if(this.engine) {
-          this.engine.buildSceneFromConfig(json, json.rulesByLayer, json.settings || {});
+          try {
+              this.engine.buildSceneFromConfig(json, json.rulesByLayer, json.settings || {});
+          } catch (e) {
+              console.error('[CAD3DBridge] Failed to open 3D view:', e);
+              alert('تعذر فتح العرض ثلاثي الأبعاد. افتح الكونسول لمعرفة الخطأ.');
+              throw e;
+          }
       }
   }
 };
