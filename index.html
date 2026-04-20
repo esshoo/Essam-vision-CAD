@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Essam-CAD-PDF-3D-VR</title>
 
   <meta name="theme-color" content="#111111" />
@@ -18,8 +18,9 @@
   <script src="./libs/pdf/pdf.min.js"></script>
 
   <style>
-    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #111; }
-    #myCanvas { width: 100vw; height: 100vh; }
+    html, body { width: 100%; height: 100%; min-height: 100dvh; margin: 0; overflow: hidden; background: #111; overscroll-behavior: none; }
+    body { position: fixed; inset: 0; }
+    #myCanvas { position: fixed; inset: 0; width: 100vw; height: 100dvh; min-height: 100dvh; }
   </style>
 
   <!-- Import map: x-viewer + three -->
@@ -67,16 +68,36 @@
 
 
   <script>
-    if ('serviceWorker' in navigator) {
+    (function () {
+      if (!('serviceWorker' in navigator)) return;
+
+      const markOfflineReady = () => {
+        window.__essamPwaOfflineReady = true;
+        localStorage.setItem('essam-pwa-offline-ready', '1');
+        console.log('[PWA] Offline cache is ready.');
+      };
+
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event?.data?.type === 'ESSAM_PWA_CACHE_READY') markOfflineReady();
+      });
+
       window.addEventListener('load', async () => {
         try {
-          const registration = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+          const registration = await navigator.serviceWorker.register('./sw.js', {
+            scope: './',
+            updateViaCache: 'none'
+          });
           console.log('[PWA] Service worker registered:', registration.scope);
+          registration.update?.();
+          await navigator.serviceWorker.ready;
+          if (navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({ type: 'ESSAM_PWA_PING' });
+          }
         } catch (error) {
           console.error('[PWA] Service worker registration failed:', error);
         }
       });
-    }
+    })();
   </script>
 </body>
 </html>

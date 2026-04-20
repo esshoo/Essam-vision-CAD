@@ -2,7 +2,7 @@
   "name": "Essam CAD PDF 3D VR",
   "short_name": "Essam CAD",
   "description": "Offline-installable CAD/PDF/DXF/DWG viewer with pen annotations and 3D preview.",
-  "start_url": "./index.html",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#111111",

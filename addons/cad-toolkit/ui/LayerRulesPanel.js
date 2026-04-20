@@ -41,13 +41,13 @@ function ensurePanel() {
   if (document.getElementById("layer-rules-panel")) return;
 
   panel = el("aside", { id: "layer-rules-panel", style: {
-    position: "absolute", left: "20px", top: "20px", width: "420px", height: "85vh",
+    position: "fixed", left: "20px", top: "20px", width: "420px", height: "85vh",
     zIndex: 4200, background: "rgba(255,255,255,0.98)", border: "1px solid #ccc",
     borderRadius: "12px", boxShadow: "0 10px 30px rgba(0,0,0,0.2)",
     display: "flex", flexDirection: "column", fontFamily: "sans-serif", overflow: "hidden"
   }});
 
-  header = el("div", { style: { padding: "12px", background: "#f8f9fa", borderBottom: "1px solid #ddd", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "move" }}, [
+  header = el("div", { style: { padding: "12px", background: "#f8f9fa", borderBottom: "1px solid #ddd", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "move", touchAction: "none", userSelect: "none" }}, [
     el("span", { style: { fontWeight: "bold", color: "#333" }}, ["عصام الكهربائي 0501618112Layer Config v13"]),
     el("div", { style: { display: "flex", gap: "5px" }}, [
       btn("—", toggleCollapse),
@@ -109,20 +109,43 @@ function ensurePanel() {
 }
 
 function makeDraggable(target, handle) {
-  let startX = 0, startY = 0, startLeft = 0, startTop = 0, dragging = false;
+  let startX = 0, startY = 0, startLeft = 0, startTop = 0, dragging = false, activePointerId = null;
+
+  const stopEvent = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
   handle.addEventListener("pointerdown", (e) => {
     if (e.target.tagName === "BUTTON" || e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
-    dragging = true; handle.setPointerCapture(e.pointerId);
-    startX = e.clientX; startY = e.clientY;
+    dragging = true;
+    activePointerId = e.pointerId;
+    handle.setPointerCapture?.(e.pointerId);
+    startX = e.clientX;
+    startY = e.clientY;
     const rect = target.getBoundingClientRect();
-    startLeft = rect.left; startTop = rect.top;
+    startLeft = rect.left;
+    startTop = rect.top;
+    stopEvent(e);
   });
+
   handle.addEventListener("pointermove", (e) => {
-    if (!dragging) return;
+    if (!dragging || e.pointerId !== activePointerId) return;
     target.style.left = (startLeft + e.clientX - startX) + "px";
     target.style.top = (startTop + e.clientY - startY) + "px";
+    stopEvent(e);
   });
-  handle.addEventListener("pointerup", () => dragging = false);
+
+  const finish = (e) => {
+    if (!dragging || (activePointerId !== null && e.pointerId !== activePointerId)) return;
+    dragging = false;
+    activePointerId = null;
+    handle.releasePointerCapture?.(e.pointerId);
+    stopEvent(e);
+  };
+
+  handle.addEventListener("pointerup", finish);
+  handle.addEventListener("pointercancel", finish);
 }
 
 function loadRules() { state.rules = LayerRulesStore.load(PROJECT_ID); }

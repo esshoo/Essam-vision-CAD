@@ -33,6 +33,9 @@ class CADDrawingOverlay {
     this.currentStroke = null;
     this.lastStorageKey = null;
     this.activePointerId = null;
+    this.activeTouchPointers = new Set();
+    this.pendingTouchDraw = null;
+    this.multiTouchGestureActive = false;
     this.allowTouchDrawing = localStorage.getItem("essam-cad-drawing-allow-touch") === "1";
     this.selectedIndex = -1;
     this.dragSelection = null;
@@ -58,6 +61,7 @@ class CADDrawingOverlay {
     this.minimizeBtn = null;
     this.toolbarCollapsed = localStorage.getItem("essam-cad-drawing-toolbar-collapsed") === "1";
     this.toolbarDrag = null;
+    this._originalViewerTouchBindings = null;
 
     this._lastViewSignature = "";
     this._raf = 0;
@@ -126,6 +130,7 @@ class CADDrawingOverlay {
       fontFamily: "Arial, sans-serif",
       userSelect: "none",
       overflow: "hidden",
+      touchAction: "none",
     });
 
     this.toolbarHeader = document.createElement("div");
@@ -138,6 +143,7 @@ class CADDrawingOverlay {
       background: "rgba(255,255,255,0.08)",
       cursor: "move",
       borderBottom: "1px solid rgba(255,255,255,0.12)",
+      touchAction: "none",
     });
 
     const title = document.createElement("div");
@@ -519,6 +525,7 @@ class CADDrawingOverlay {
     this.toolbar.style.display = "block";
     this.applyToolbarCollapsedState();
     this.handleFileOrPageChange();
+    this.updateViewerTouchBindings();
     this.updateStatus(this.getStatusText());
   }
 
@@ -529,6 +536,10 @@ class CADDrawingOverlay {
     if (this.propertiesPanel) this.propertiesPanel.style.display = "none";
     this.currentStroke = null;
     this.activePointerId = null;
+    this.pendingTouchDraw = null;
+    this.activeTouchPointers.clear();
+    this.multiTouchGestureActive = false;
+    this.updateViewerTouchBindings();
     this.saveNow(false);
     this.redraw();
   }
@@ -539,56 +550,53 @@ class CADDrawingOverlay {
 
   onPointerDown(e) {
     if (!this.enabled || this.isUiTarget(e.target)) return;
+
+    const isTouch = (e.pointerType || "mouse") === "touch";
+    if (isTouch) {
+      if (!this.allowTouchDrawing) return;
+      this.activeTouchPointers.add(e.pointerId);
+      if (this.activeTouchPointers.size > 1) {
+        this.pendingTouchDraw = null;
+        this.cancelCurrentTouchStroke(false);
+        this.multiTouchGestureActive = true;
+        this.releaseViewerTouchNavigation();
+        this.updateStatus("وضع اليد: التحريك/التكبير بإصبعين.");
+        return;
+      }
+    }
+
     if (!this.isAcceptedDrawingInput(e)) return;
 
-    const bounds = this.getActiveWorldBounds();
-    const worldPoint = this.clientToWorld(e.clientX, e.clientY);
-    if (!worldPoint) {
-      this.updateStatus("لم أستطع قراءة إحداثيات الملف. جرّب بعد تحميل الملف بالكامل.");
-      return;
-    }
-    if (!this.isInsideBounds(worldPoint, bounds)) {
-      this.updateStatus("الرسم داخل حدود الملف فقط.");
-      return;
-    }
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (this.tool === "select") {
-      this.handleSelectDown(worldPoint, e.clientX, e.clientY, e.pointerId);
+    if (isTouch && this.allowTouchDrawing && this.tool !== "select" && this.tool !== "text") {
+      this.pendingTouchDraw = {
+        pointerId: e.pointerId,
+        clientX: e.clientX,
+        clientY: e.clientY,
+      };
       return;
     }
 
-    if (this.tool === "text") {
-      this.handleTextClick(worldPoint, e.clientX, e.clientY);
-      return;
-    }
-
-    this.selectedIndex = -1;
-    this.syncPropertiesFromSelected();
-    this.activePointerId = e.pointerId;
-    const screenSize = this.getEffectiveScreenSize();
-    const worldSize = this.pixelSizeToWorldSize(screenSize, e.clientX, e.clientY, worldPoint.z);
-
-    this.currentStroke = {
-      version: 7,
-      coordSpace: "world",
-      kind: this.isShapeTool() ? "shape" : "stroke",
-      tool: this.tool,
-      input: e.pointerType || "mouse",
-      color: this.color,
-      opacity: this.tool === "highlighter" ? Math.min(this.opacity, 0.35) : this.opacity,
-      screenSize,
-      worldSize,
-      planeZ: worldPoint.z,
-      pageBounds: this.getActiveWorldBounds(),
-      layerName: this.annotationLayerName,
-      points: [worldPoint],
-    };
+    this.startStrokeFromPointer(e);
   }
 
   onPointerMove(e) {
+    const isTouch = (e.pointerType || "mouse") === "touch";
+
+    if (isTouch && !this.allowTouchDrawing && !this.currentStroke && !this.pendingTouchDraw) return;
+
+    if (isTouch && this.multiTouchGestureActive && this.activeTouchPointers.size > 1) {
+      this.cancelCurrentTouchStroke(false);
+      return;
+    }
+
+    if (this.pendingTouchDraw && e.pointerId === this.pendingTouchDraw.pointerId) {
+      if (this.activeTouchPointers.size > 1) return;
+      const moved = Math.hypot(e.clientX - this.pendingTouchDraw.clientX, e.clientY - this.pendingTouchDraw.clientY);
+      if (moved < 3) return;
+      this.pendingTouchDraw = null;
+      if (!this.startStrokeFromPointer(e)) return;
+    }
+
     if (this.dragSelection && e.pointerId === this.activePointerId) {
       this.handleSelectMove(e);
       return;
@@ -613,6 +621,14 @@ class CADDrawingOverlay {
   }
 
   onPointerUp(e) {
+    const isTouch = (e.pointerType || "mouse") === "touch";
+
+    if (isTouch && !this.allowTouchDrawing && !this.currentStroke && !this.pendingTouchDraw && !this.dragSelection) return;
+
+    if (this.pendingTouchDraw && e.pointerId === this.pendingTouchDraw.pointerId) {
+      this.pendingTouchDraw = null;
+    }
+
     if (this.dragSelection && e.pointerId === this.activePointerId) {
       e.preventDefault();
       e.stopPropagation();
@@ -621,10 +637,14 @@ class CADDrawingOverlay {
       this.saveNow(false);
       this.redraw();
       this.syncPropertiesFromSelected();
+      if (isTouch) this.unregisterTouchPointer(e.pointerId);
       return;
     }
 
-    if (!this.currentStroke || e.pointerId !== this.activePointerId) return;
+    if (!this.currentStroke || e.pointerId !== this.activePointerId) {
+      if (isTouch) this.unregisterTouchPointer(e.pointerId);
+      return;
+    }
 
     e.preventDefault();
     e.stopPropagation();
@@ -636,6 +656,75 @@ class CADDrawingOverlay {
     this.currentStroke = null;
     this.activePointerId = null;
     this.redraw();
+    if (isTouch) this.unregisterTouchPointer(e.pointerId);
+  }
+
+  startStrokeFromPointer(e) {
+    const bounds = this.getActiveWorldBounds();
+    const worldPoint = this.clientToWorld(e.clientX, e.clientY);
+    if (!worldPoint) {
+      this.updateStatus("لم أستطع قراءة إحداثيات الملف. جرّب بعد تحميل الملف بالكامل.");
+      return false;
+    }
+    if (!this.isInsideBounds(worldPoint, bounds)) {
+      this.updateStatus("الرسم داخل حدود الملف فقط.");
+      return false;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (this.tool === "select") {
+      this.handleSelectDown(worldPoint, e.clientX, e.clientY, e.pointerId);
+      return true;
+    }
+
+    if (this.tool === "text") {
+      this.handleTextClick(worldPoint, e.clientX, e.clientY);
+      return true;
+    }
+
+    this.selectedIndex = -1;
+    this.syncPropertiesFromSelected();
+    this.activePointerId = e.pointerId;
+    const screenSize = this.getEffectiveScreenSize();
+    const worldSize = this.pixelSizeToWorldSize(screenSize, e.clientX, e.clientY, worldPoint.z);
+
+    this.currentStroke = {
+      version: 7,
+      coordSpace: "world",
+      kind: this.isShapeTool() ? "shape" : "stroke",
+      tool: this.tool,
+      input: e.pointerType || "mouse",
+      color: this.color,
+      opacity: this.tool === "highlighter" ? Math.min(this.opacity, 0.35) : this.opacity,
+      screenSize,
+      worldSize,
+      planeZ: worldPoint.z,
+      pageBounds: this.getActiveWorldBounds(),
+      layerName: this.annotationLayerName,
+      points: [worldPoint],
+    };
+    return true;
+  }
+
+  cancelCurrentTouchStroke(save = false) {
+    if (!this.currentStroke || this.currentStroke.input !== "touch") return;
+    if (save && this.currentStroke.points.length > 1) {
+      this.strokes.push(this.currentStroke);
+      this.saveNow(false);
+    }
+    this.currentStroke = null;
+    this.activePointerId = null;
+    this.redraw();
+  }
+
+  unregisterTouchPointer(pointerId) {
+    this.activeTouchPointers.delete(pointerId);
+    if (this.activeTouchPointers.size === 0) {
+      this.pendingTouchDraw = null;
+      this.multiTouchGestureActive = false;
+    }
   }
 
   handleSelectDown(worldPoint, clientX, clientY, pointerId) {
@@ -1063,21 +1152,64 @@ class CADDrawingOverlay {
   isAcceptedDrawingInput(e) {
     const type = e.pointerType || "mouse";
     if (type === "pen" || type === "mouse") return true;
-    if (type === "touch") return this.allowTouchDrawing;
+    if (type === "touch") {
+      if (!this.allowTouchDrawing) return false;
+      return !this.multiTouchGestureActive || this.activeTouchPointers.size <= 1;
+    }
     return false;
   }
 
   toggleTouchDrawing() {
     this.allowTouchDrawing = !this.allowTouchDrawing;
+    if (!this.allowTouchDrawing) {
+      this.pendingTouchDraw = null;
+      this.cancelCurrentTouchStroke(false);
+      this.dragSelection = null;
+      this.activePointerId = null;
+      this.activeTouchPointers.clear();
+      this.multiTouchGestureActive = false;
+    }
+    this.updateViewerTouchBindings();
+    this.releaseViewerTouchNavigation();
+    this.redraw();
     localStorage.setItem("essam-cad-drawing-allow-touch", this.allowTouchDrawing ? "1" : "0");
     this.updateTouchButton();
-    this.updateStatus(this.allowTouchDrawing ? "اللمس يرسم الآن" : "اللمس للتحريك فقط - القلم يرسم");
+    this.updateStatus(this.allowTouchDrawing ? "تم تفعيل الرسم بالأصبع. إصبع واحد للرسم وإصبعان للتحريك/التكبير." : "اللمس للتحريك فقط - القلم يرسم");
   }
 
   updateTouchButton() {
     if (!this.touchBtn) return;
-    this.touchBtn.textContent = this.allowTouchDrawing ? "👆 لمس: رسم" : "✋ لمس: تحريك";
+    this.touchBtn.textContent = this.allowTouchDrawing ? "🖐️ رسم بالأصبع" : "✋ لمس: تحريك";
     this.touchBtn.style.background = this.allowTouchDrawing ? "rgba(0,160,255,0.55)" : "rgba(255,255,255,0.12)";
+  }
+
+  getCameraControls() {
+    return this.getViewer()?.cameraManager?.cameraControls || null;
+  }
+
+  updateViewerTouchBindings() {
+    const controls = this.getCameraControls();
+    if (!controls?.touches) return;
+    if (!this._originalViewerTouchBindings) {
+      this._originalViewerTouchBindings = { ...controls.touches };
+    }
+    const ACTION = controls.constructor?.ACTION || {};
+    const noneAction = ACTION.NONE ?? 0;
+    if (this.enabled && this.allowTouchDrawing) {
+      controls.touches = {
+        ...this._originalViewerTouchBindings,
+        one: noneAction,
+      };
+    } else {
+      controls.touches = { ...this._originalViewerTouchBindings };
+    }
+    this.getViewer()?.enableRender?.();
+  }
+
+  releaseViewerTouchNavigation() {
+    const controls = this.getCameraControls();
+    try { controls?.cancel?.(); } catch (_) {}
+    try { this.getViewer()?.enableRender?.(); } catch (_) {}
   }
 
   isToolbarTarget(target) {
@@ -1092,6 +1224,12 @@ class CADDrawingOverlay {
     if (this.tool === "highlighter") return Math.max(this.size * 3, 12);
     if (this.tool === "eraser") return Math.max(this.size * 2, 12);
     return this.size;
+  }
+
+  isAppleMobileDevice() {
+    const ua = navigator.userAgent || "";
+    const platform = navigator.platform || "";
+    return /iPad|iPhone|iPod/i.test(ua) || (platform === "MacIntel" && navigator.maxTouchPoints > 1);
   }
 
   getViewer() {
@@ -1307,7 +1445,7 @@ class CADDrawingOverlay {
   }
 
   resizeCanvas(keepDrawings = true) {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = this.isAppleMobileDevice() ? Math.min(window.devicePixelRatio || 1, 1.5) : (window.devicePixelRatio || 1);
     const rect = this.canvas.getBoundingClientRect();
     const nextW = Math.max(1, Math.round(rect.width * dpr));
     const nextH = Math.max(1, Math.round(rect.height * dpr));

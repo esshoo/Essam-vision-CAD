@@ -35,8 +35,12 @@ export class CADViewerApp {
     this._pdfFitTimer = null;
     this._fixInterval = null;
     
+    this._isAppleMobile = this._detectAppleMobile();
+    this._isAndroidTouch = this._detectAndroidTouch();
+
     // ✅ مفتاح التحكم في الجودة (يدوي)
-    this._useProgressiveMode = false; // الافتراضي: جودة عالية (لحل مشكلة الطبقات)
+    // على iPad/iPhone نبدأ بوضع الأمان تلقائيًا لتقليل مشاكل الذاكرة وإعادة التحميل.
+    this._useProgressiveMode = this._isAppleMobile;
   }
 
   async init() {
@@ -78,7 +82,7 @@ export class CADViewerApp {
     new MeasurementPlugin(this.viewer, { language: "en" });
     new MarkupPlugin(this.viewer);
     new Settings2dPlugin(this.viewer, { language: "en", visible: false });
-    new StatsPlugin(this.viewer);
+    if (!this._isAppleMobile) new StatsPlugin(this.viewer);
     new ScreenshotPlugin(this.viewer, { setBackgroundTransparent: false });
 
     const menuConfig = {
@@ -119,34 +123,40 @@ export class CADViewerApp {
   // ✅ زر بسيط لتبديل الوضع يدوياً
   _initQualityToggle() {
     const toggleBtn = document.createElement("button");
-    toggleBtn.innerText = "⚡ Quality: HIGH";
+    const syncToggleLabel = () => {
+      if (this._useProgressiveMode) {
+        toggleBtn.innerText = this._isAppleMobile ? "🛡️ iPad Safe Mode" : "🛡️ Safety Mode (Multi-Page)";
+        toggleBtn.style.background = "rgba(255, 140, 0, 0.8)";
+      } else {
+        toggleBtn.innerText = "⚡ Quality: HIGH";
+        toggleBtn.style.background = "rgba(0, 200, 0, 0.8)";
+      }
+    };
+
     Object.assign(toggleBtn.style, {
-        position: "fixed",
-        bottom: "10px",
-        left: "10px",
-        zIndex: "999999",
-        padding: "8px 12px",
-        background: "rgba(0, 200, 0, 0.8)", // أخضر للجودة العالية
-        color: "white",
-        border: "none",
-        borderRadius: "5px",
-        cursor: "pointer",
-        fontWeight: "bold",
-        fontSize: "12px",
-        boxShadow: "0 2px 5px rgba(0,0,0,0.3)"
+      position: "fixed",
+      bottom: "10px",
+      left: "10px",
+      zIndex: "999999",
+      padding: "8px 12px",
+      color: "white",
+      border: "none",
+      borderRadius: "5px",
+      cursor: "pointer",
+      fontWeight: "bold",
+      fontSize: "12px",
+      boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
+      touchAction: "manipulation"
     });
 
+    syncToggleLabel();
+
     toggleBtn.onclick = () => {
-        this._useProgressiveMode = !this._useProgressiveMode;
-        if (this._useProgressiveMode) {
-            toggleBtn.innerText = "🛡️ Safety Mode (Multi-Page)";
-            toggleBtn.style.background = "rgba(255, 140, 0, 0.8)"; // برتقالي للأمان
-        } else {
-            toggleBtn.innerText = "⚡ Quality: HIGH";
-            toggleBtn.style.background = "rgba(0, 200, 0, 0.8)";
-        }
-        console.log("Mode switched to:", this._useProgressiveMode ? "Progressive (Safety)" : "Direct (High Quality)");
-        alert(`تم التبديل إلى: ${this._useProgressiveMode ? "وضع الأمان (للصفحات المتعددة)" : "وضع الجودة العالية (للصفحة الواحدة)"}.\nيرجى إعادة تحميل الملف الآن.`);
+      this._useProgressiveMode = !this._useProgressiveMode;
+      syncToggleLabel();
+      console.log("Mode switched to:", this._useProgressiveMode ? "Progressive (Safety)" : "Direct (High Quality)");
+      alert(`تم التبديل إلى: ${this._useProgressiveMode ? "وضع الأمان" : "وضع الجودة العالية"}.
+يرجى إعادة تحميل الملف الآن.`);
     };
 
     document.body.appendChild(toggleBtn);
@@ -160,8 +170,8 @@ export class CADViewerApp {
       app.uploader.file = file;
       const fileUrl = URL.createObjectURL(file);
       
-      // نعتمد على المفتاح اليدوي الآن بدلاً من التخمين
-      const useProgressive = app._useProgressiveMode;
+      // على أجهزة Apple اللمسية نفضل وضع الأمان افتراضياً لتقليل إعادة التحميل ومشاكل الذاكرة.
+      const useProgressive = app._useProgressiveMode || app._isAppleMobile;
       console.log(`[Uploader] Starting PDF load. Mode: ${useProgressive ? 'Progressive' : 'High Quality'}`);
 
       let didFinalFit = false;
@@ -183,9 +193,9 @@ export class CADViewerApp {
         app._pdfPlugin = new PdfLoaderPlugin(app.viewer, {
             font: app.viewer.getFontManager?.() || app.viewer.fontManager,
             pdfWorker: this.pdfWorker,
-            // تطبيق الوضع المختار يدوياً
+            // تطبيق الوضع المختار يدوياً مع تخفيف الجودة على iPad/iPhone لتفادي إعادة التحميل.
             enableProgressiveLoad: useProgressive, 
-            scale: useProgressive ? 2.0 : 3.0, 
+            scale: app._getPdfRenderScale(useProgressive), 
         });
 
         const model = await app._pdfPlugin.loadAsync(
@@ -351,7 +361,7 @@ export class CADViewerApp {
 
   _startContinuousFixer() {
     this._stopContinuousFixer();
-    this._fixInterval = setInterval(() => { this._forceNoCulling(); }, 500);
+    this._fixInterval = setInterval(() => { this._forceNoCulling(); }, this._isAppleMobile ? 900 : 500);
     this._forceNoCulling();
   }
 
@@ -364,6 +374,7 @@ export class CADViewerApp {
       const scene = this.viewer.scene || (this.viewer.getScene && this.viewer.getScene());
       if (!scene) return;
 
+      let touched = 0;
       scene.traverse((obj) => {
         if (obj.isMesh || obj.isLine) {
           obj.frustumCulled = false;
@@ -378,10 +389,11 @@ export class CADViewerApp {
                  obj.material.polygonOffsetUnits = -4.0;
                  obj.material.needsUpdate = true;
              }
+             touched++;
           }
         }
       });
-      if (this.viewer.enableRender) this.viewer.enableRender();
+      if (touched && this.viewer.enableRender) this.viewer.enableRender();
     } catch (_) {}
   }
 
@@ -422,6 +434,24 @@ export class CADViewerApp {
       if (controls) { controls.enableRotate = false; controls.update(); }
       this.viewer.enableRender?.();
     } catch (_) {}
+  }
+
+
+  _detectAppleMobile() {
+    const ua = navigator.userAgent || "";
+    const platform = navigator.platform || "";
+    return /iPad|iPhone|iPod/i.test(ua) || (platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  }
+
+  _detectAndroidTouch() {
+    const ua = navigator.userAgent || "";
+    return /Android/i.test(ua) && (navigator.maxTouchPoints || 0) > 0;
+  }
+
+  _getPdfRenderScale(useProgressive) {
+    if (this._isAppleMobile) return useProgressive ? 1.35 : 1.75;
+    if (this._isAndroidTouch) return useProgressive ? 1.75 : 2.4;
+    return useProgressive ? 2.0 : 3.0;
   }
 
   openFileUpload() {
