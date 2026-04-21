@@ -1,0 +1,21 @@
+v35 Offline PDF export
+
+What changed
+- Added a local PDF export runtime at ./libs/pdf-lib/pdf-lib.min.js
+- index.html now loads the local runtime before the app starts
+- cache-urls.json now includes the local runtime
+- sw.js cache name bumped so the new runtime is cached by the PWA
+- DrawingOverlay.js now prefers the local offline exporter first
+
+Important behavior
+- Export PDF now works without internet after the updated PWA files are loaded once
+- The exported PDF is flattened visually page-by-page
+- When reopening the exported PDF, your markups will be visible
+- The original editable annotation layers do NOT come back from the exported PDF alone
+- To keep annotations editable, continue using Save JSON / Open JSON with the original PDF
+
+After upload/update
+- Push the new files to GitHub
+- Open the site online once
+- Hard refresh with Ctrl + F5
+- If the old PWA is already installed, remove it and install it again to ensure the new service worker and cache are active

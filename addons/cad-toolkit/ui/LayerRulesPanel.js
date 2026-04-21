@@ -106,6 +106,9 @@ function ensurePanel() {
      refreshFromViewer();
      show();
   });
+
+  window.addEventListener("cad:pen-layer-updated", () => refreshFromViewer());
+  window.addEventListener("cad:annotation-layers-updated", () => refreshFromViewer());
 }
 
 function makeDraggable(target, handle) {
@@ -186,11 +189,20 @@ function getDefaultsForType(type) {
     return { height: 0.0, thickness: 0.01, elevation: 0.0 };
 }
 
-function getPenLayerEntities() {
+function getAnnotationLayerEntities() {
   try {
     return window.cadDrawingOverlay?.get3DEntities?.() || [];
   } catch (err) {
-    console.warn("Pen layer export failed:", err);
+    console.warn("Annotation layer export failed:", err);
+    return [];
+  }
+}
+
+function getAnnotationLayerNames() {
+  try {
+    return window.cadDrawingOverlay?.getAnnotationLayerNames?.() || [];
+  } catch (err) {
+    console.warn("Annotation layer names failed:", err);
     return [];
   }
 }
@@ -198,13 +210,14 @@ function getPenLayerEntities() {
 function getMergedRawData() {
   if (!window.cadApp?.viewer) return { layers: [], entities: [] };
   const rawData = CADLayerKit.extractFromViewer(window.cadApp.viewer);
-  const penEntities = getPenLayerEntities();
+  const annotationEntities = getAnnotationLayerEntities();
+  const annotationLayers = getAnnotationLayerNames();
   const layerSet = new Set(Array.isArray(rawData.layers) ? rawData.layers : []);
-  if (penEntities.length) layerSet.add("✏️ Pen");
+  annotationLayers.forEach((name) => layerSet.add(name));
   return {
     ...rawData,
     layers: Array.from(layerSet),
-    entities: [...(Array.isArray(rawData.entities) ? rawData.entities : []), ...penEntities],
+    entities: [...(Array.isArray(rawData.entities) ? rawData.entities : []), ...annotationEntities],
   };
 }
 
@@ -212,12 +225,14 @@ function refreshFromViewer() {
   if (!window.cadApp?.viewer) return;
   const res = getMergedRawData();
   const baseLayers = Array.isArray(res.layers) ? res.layers.slice() : [];
-  if (!baseLayers.includes("✏️ Pen")) baseLayers.push("✏️ Pen");
+  getAnnotationLayerNames().forEach((name) => { if (!baseLayers.includes(name)) baseLayers.push(name); });
   state.layers = baseLayers.sort((a, b) => a.localeCompare(b));
   ensureDefaults(state.layers);
-  if (!state.rules["✏️ Pen"]) {
-    state.rules["✏️ Pen"] = { type: "lines", color: "#ff3333", ...getDefaultsForType("lines") };
-  }
+  getAnnotationLayerNames().forEach((name) => {
+    if (!state.rules[name]) {
+      state.rules[name] = { type: "lines", color: "#ff3333", ...getDefaultsForType("lines") };
+    }
+  });
   renderList();
 }
 

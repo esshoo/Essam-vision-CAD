@@ -40,7 +40,11 @@ class CADDrawingOverlay {
     this.selectedIndex = -1;
     this.dragSelection = null;
     this.clipboardItem = null;
-    this.annotationLayerName = "✏️ Pen";
+    this.defaultAnnotationLayerName = "✏️ Pen";
+    this.annotationLayerName = this.defaultAnnotationLayerName;
+    this.annotationLayers = [
+      { name: this.defaultAnnotationLayerName, color: this.colorToHex(this.color), visible: true, locked: false },
+    ];
 
     this.canvas = null;
     this.ctx = null;
@@ -51,9 +55,14 @@ class CADDrawingOverlay {
     this.propSizeInput = null;
     this.propOpacityInput = null;
     this.propFontSizeInput = null;
+    this.propLayerSelect = null;
     this.propTitle = null;
     this.colorInput = null;
     this.sizeInput = null;
+    this.layerSelect = null;
+    this.layerVisibleBtn = null;
+    this.layerLockBtn = null;
+    this.layerInfo = null;
     this.fontSizeInput = null;
     this.opacityInput = null;
     this.toolbarHeader = null;
@@ -69,6 +78,302 @@ class CADDrawingOverlay {
     this._boundFileLoaded = () => this.handleFileOrPageChange();
     this._boundPageChanged = () => this.handleFileOrPageChange();
     this._boundKeyDown = (e) => this.onKeyDown(e);
+  }
+
+
+  getCurrentFileName() {
+    return window.cadApp?.uploader?.file?.name || "untitled-file";
+  }
+
+  getLayerSettingsKey(fileName = null) {
+    const name = fileName || this.getCurrentFileName();
+    return `essam-cad-drawing-layers::${name}`;
+  }
+
+  getPageCount() {
+    return Math.max(1, Number(window.cadApp?._pdfPageCount || 1));
+  }
+
+  buildLayerMeta(name, color = this.color, extras = {}) {
+    const safe = String(name || "").trim() || this.defaultAnnotationLayerName;
+    return {
+      name: safe,
+      color: this.colorToHex(color || this.color || "#ff3333"),
+      visible: extras.visible !== false,
+      locked: extras.locked === true,
+    };
+  }
+
+  ensureAnnotationLayers(extraNames = []) {
+    const metas = [];
+    const pushMeta = (metaLike) => {
+      const name = String(metaLike?.name || metaLike || "").trim();
+      if (!name) return;
+      if (metas.some((m) => m.name === name)) return;
+      metas.push(this.buildLayerMeta(name, metaLike?.color, metaLike || {}));
+    };
+
+    pushMeta(this.defaultAnnotationLayerName);
+    (Array.isArray(this.annotationLayers) ? this.annotationLayers : []).forEach(pushMeta);
+    (Array.isArray(extraNames) ? extraNames : []).forEach(pushMeta);
+    (Array.isArray(this.strokes) ? this.strokes : []).forEach((item) => pushMeta(item?.layerName));
+
+    if (!metas.length) pushMeta(this.defaultAnnotationLayerName);
+    this.annotationLayers = metas;
+    if (!this.annotationLayers.some((layer) => layer.name === this.annotationLayerName)) {
+      this.annotationLayerName = this.annotationLayers[0].name;
+    }
+    return this.annotationLayers;
+  }
+
+  getAnnotationLayerNames() {
+    return this.ensureAnnotationLayers().map((layer) => layer.name);
+  }
+
+  getLayerMeta(name = this.annotationLayerName) {
+    this.ensureAnnotationLayers();
+    return this.annotationLayers.find((layer) => layer.name === name) || null;
+  }
+
+  isLayerVisible(name) {
+    return this.getLayerMeta(name)?.visible !== false;
+  }
+
+  isLayerLocked(name) {
+    return this.getLayerMeta(name)?.locked === true;
+  }
+
+  getRenderableStrokes(items = this.strokes) {
+    return (Array.isArray(items) ? items : []).filter((item) => this.isLayerVisible(item?.layerName || this.defaultAnnotationLayerName));
+  }
+
+  getLayerItemCount(name, strokes = this.strokes) {
+    return (Array.isArray(strokes) ? strokes : []).filter((item) => (item?.layerName || this.defaultAnnotationLayerName) === name).length;
+  }
+
+  getAllPageLayerUsage(name) {
+    let count = 0;
+    for (let pageNo = 1; pageNo <= this.getPageCount(); pageNo++) {
+      count += this.loadStrokesForPage(pageNo).filter((item) => (item?.layerName || this.defaultAnnotationLayerName) === name).length;
+    }
+    return count;
+  }
+
+  saveLayerSettings(fileName = null) {
+    const key = this.getLayerSettingsKey(fileName);
+    this.ensureAnnotationLayers();
+    localStorage.setItem(key, JSON.stringify({
+      version: 1,
+      activeLayer: this.annotationLayerName,
+      layers: this.annotationLayers,
+      savedAt: new Date().toISOString(),
+    }));
+    window.dispatchEvent(new CustomEvent("cad:annotation-layers-updated"));
+    window.dispatchEvent(new CustomEvent("cad:pen-layer-updated"));
+  }
+
+  loadLayerSettings() {
+    try {
+      const key = this.getLayerSettingsKey();
+      const data = JSON.parse(localStorage.getItem(key) || "{}");
+      this.annotationLayers = Array.isArray(data.layers) ? data.layers.map((layer) => this.buildLayerMeta(layer?.name, layer?.color, layer || {})) : [];
+      this.annotationLayerName = String(data.activeLayer || this.annotationLayerName || this.defaultAnnotationLayerName);
+    } catch (_) {
+      this.annotationLayers = [];
+      this.annotationLayerName = this.defaultAnnotationLayerName;
+    }
+    this.ensureAnnotationLayers();
+    this.refreshLayerControls();
+  }
+
+  makeUniqueLayerName(baseName) {
+    this.ensureAnnotationLayers();
+    const base = String(baseName || "Layer").trim() || "Layer";
+    if (!this.annotationLayers.some((layer) => layer.name === base)) return base;
+    let i = 2;
+    while (this.annotationLayers.some((layer) => layer.name === `${base} ${i}`)) i += 1;
+    return `${base} ${i}`;
+  }
+
+  setActiveLayer(name, save = true) {
+    if (!name) return;
+    this.ensureAnnotationLayers();
+    if (!this.annotationLayers.some((layer) => layer.name === name)) return;
+    this.annotationLayerName = name;
+    this.refreshLayerControls();
+    if (save) this.saveLayerSettings();
+  }
+
+  refreshLayerControls() {
+    this.ensureAnnotationLayers();
+    if (this.layerSelect) {
+      const prev = this.layerSelect.value;
+      this.layerSelect.innerHTML = "";
+      this.annotationLayers.forEach((layer) => {
+        const opt = document.createElement("option");
+        opt.value = layer.name;
+        const count = this.getLayerItemCount(layer.name);
+        opt.textContent = `${layer.name}${count ? ` (${count})` : ""}`;
+        this.layerSelect.appendChild(opt);
+      });
+      this.layerSelect.value = this.annotationLayers.some((layer) => layer.name === this.annotationLayerName) ? this.annotationLayerName : (prev || this.annotationLayers[0]?.name || this.defaultAnnotationLayerName);
+    }
+    const active = this.getLayerMeta(this.annotationLayerName);
+    if (this.layerVisibleBtn) {
+      this.layerVisibleBtn.textContent = active?.visible === false ? "🙈 مخفي" : "👁️ ظاهر";
+      this.layerVisibleBtn.style.background = active?.visible === false ? "rgba(255,120,120,0.22)" : "rgba(255,255,255,0.12)";
+    }
+    if (this.layerLockBtn) {
+      this.layerLockBtn.textContent = active?.locked ? "🔒 مقفول" : "🔓 مفتوح";
+      this.layerLockBtn.style.background = active?.locked ? "rgba(255,180,80,0.24)" : "rgba(255,255,255,0.12)";
+    }
+    if (this.layerInfo) {
+      const count = active ? this.getLayerItemCount(active.name) : 0;
+      this.layerInfo.textContent = active ? `${active.name} • ${count} عنصر` : "";
+    }
+    if (this.propLayerSelect) {
+      const selectedItem = this.getSelectedItem();
+      const currentValue = selectedItem?.layerName || this.annotationLayerName;
+      this.propLayerSelect.innerHTML = "";
+      this.annotationLayers.forEach((layer) => {
+        const opt = document.createElement("option");
+        opt.value = layer.name;
+        opt.textContent = layer.name;
+        this.propLayerSelect.appendChild(opt);
+      });
+      this.propLayerSelect.value = this.annotationLayers.some((layer) => layer.name === currentValue) ? currentValue : (this.annotationLayers[0]?.name || this.defaultAnnotationLayerName);
+    }
+  }
+
+  createAnnotationLayer(assignSelected = false) {
+    const suggested = this.makeUniqueLayerName(this.annotationLayerName === this.defaultAnnotationLayerName ? "✏️ Layer" : this.annotationLayerName);
+    const input = prompt("اسم الطبقة الجديدة:", suggested);
+    if (input === null) return null;
+    const trimmed = String(input).trim();
+    if (!trimmed) return null;
+    const unique = this.makeUniqueLayerName(trimmed);
+    const meta = this.buildLayerMeta(unique, this.color);
+    this.annotationLayers.push(meta);
+    if (assignSelected && this.getSelectedItem()) {
+      this.moveSelectedToLayer(unique, false);
+    }
+    this.setActiveLayer(unique, false);
+    this.saveLayerSettings();
+    this.refreshLayerControls();
+    this.redraw();
+    this.updateStatus(`تم إنشاء طبقة جديدة: ${unique}`);
+    return unique;
+  }
+
+  renameActiveLayer() {
+    const active = this.getLayerMeta(this.annotationLayerName);
+    if (!active) return;
+    const input = prompt("اسم الطبقة:", active.name);
+    if (input === null) return;
+    const trimmed = String(input).trim();
+    if (!trimmed || trimmed === active.name) return;
+    const unique = this.makeUniqueLayerName(trimmed);
+    const oldName = active.name;
+    active.name = unique;
+    this.annotationLayerName = unique;
+    this.renameLayerInAllPages(oldName, unique);
+    this.refreshLayerControls();
+    this.saveLayerSettings();
+    this.saveNow(false);
+    this.redraw();
+    this.updateStatus(`تم تغيير اسم الطبقة إلى ${unique}`);
+  }
+
+  renameLayerInAllPages(oldName, newName) {
+    if (!oldName || !newName || oldName === newName) return;
+    for (let pageNo = 1; pageNo <= this.getPageCount(); pageNo++) {
+      const key = this.getStorageKeyForPage(pageNo);
+      try {
+        const payload = JSON.parse(localStorage.getItem(key) || "{}");
+        const strokes = Array.isArray(payload.strokes) ? payload.strokes : [];
+        let changed = false;
+        const next = strokes.map((item) => {
+          if ((item?.layerName || this.defaultAnnotationLayerName) !== oldName) return item;
+          changed = true;
+          return { ...item, layerName: newName };
+        });
+        if (changed) localStorage.setItem(key, JSON.stringify({ ...payload, strokes: next }));
+      } catch (_) {}
+    }
+    this.strokes = (Array.isArray(this.strokes) ? this.strokes : []).map((item) => ((item?.layerName || this.defaultAnnotationLayerName) === oldName ? { ...item, layerName: newName } : item));
+  }
+
+  deleteActiveLayer() {
+    this.ensureAnnotationLayers();
+    const active = this.getLayerMeta(this.annotationLayerName);
+    if (!active) return;
+    if (this.annotationLayers.length <= 1) {
+      alert("لا يمكن حذف آخر طبقة رسم.");
+      return;
+    }
+    const count = this.getAllPageLayerUsage(active.name);
+    const ok = confirm(`سيتم حذف الطبقة ${active.name}${count ? ` وكل عناصرها (${count})` : ""} من هذا الملف. هل تريد المتابعة؟`);
+    if (!ok) return;
+    this.annotationLayers = this.annotationLayers.filter((layer) => layer.name !== active.name);
+    for (let pageNo = 1; pageNo <= this.getPageCount(); pageNo++) {
+      const key = this.getStorageKeyForPage(pageNo);
+      try {
+        const payload = JSON.parse(localStorage.getItem(key) || "{}");
+        const strokes = Array.isArray(payload.strokes) ? payload.strokes : [];
+        const next = strokes.filter((item) => (item?.layerName || this.defaultAnnotationLayerName) !== active.name);
+        localStorage.setItem(key, JSON.stringify({ ...payload, strokes: next }));
+      } catch (_) {}
+    }
+    this.strokes = (Array.isArray(this.strokes) ? this.strokes : []).filter((item) => (item?.layerName || this.defaultAnnotationLayerName) !== active.name);
+    this.selectedIndex = -1;
+    this.annotationLayerName = this.annotationLayers[0]?.name || this.defaultAnnotationLayerName;
+    this.refreshLayerControls();
+    this.saveLayerSettings();
+    this.saveNow(false);
+    this.syncPropertiesFromSelected();
+    this.redraw();
+    this.updateStatus(`تم حذف الطبقة ${active.name}`);
+  }
+
+  toggleActiveLayerVisibility() {
+    const active = this.getLayerMeta(this.annotationLayerName);
+    if (!active) return;
+    active.visible = !(active.visible !== false);
+    if (active.visible === false && this.getSelectedItem() && (this.getSelectedItem().layerName || this.defaultAnnotationLayerName) === active.name) {
+      this.selectedIndex = -1;
+      this.dragSelection = null;
+      this.syncPropertiesFromSelected();
+    }
+    this.refreshLayerControls();
+    this.saveLayerSettings();
+    this.redraw();
+  }
+
+  toggleActiveLayerLock() {
+    const active = this.getLayerMeta(this.annotationLayerName);
+    if (!active) return;
+    active.locked = !active.locked;
+    this.refreshLayerControls();
+    this.saveLayerSettings();
+    this.redraw();
+  }
+
+  moveSelectedToLayer(name, persist = true) {
+    const item = this.getSelectedItem();
+    if (!item || !name) return false;
+    if (this.isLayerLocked(name)) {
+      alert("الطبقة الهدف مقفولة.");
+      return false;
+    }
+    item.layerName = name;
+    if (persist) this.saveNow(false);
+    this.refreshLayerControls();
+    this.redraw();
+    return true;
+  }
+
+  isEditingLockedItem(item = this.getSelectedItem()) {
+    return !!item && this.isLayerLocked(item.layerName || this.defaultAnnotationLayerName);
   }
 
   init() {
@@ -197,6 +502,18 @@ class CADDrawingOverlay {
     this.touchBtn = makeBtn("", "تحديد هل اللمس يرسم أم يحرك الصفحة", "", () => this.toggleTouchDrawing());
     this.updateTouchButton();
 
+    this.layerSelect = document.createElement("select");
+    css(this.layerSelect, { minWidth: "150px", height: "32px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.08)", color: "#fff", padding: "0 8px" });
+    this.layerSelect.onchange = () => this.setActiveLayer(this.layerSelect.value);
+
+    const layerNew = makeBtn("＋ طبقة", "طبقة رسم جديدة", "", () => this.createAnnotationLayer(false));
+    const layerRename = makeBtn("✎ اسم", "إعادة تسمية الطبقة الحالية", "", () => this.renameActiveLayer());
+    this.layerVisibleBtn = makeBtn("👁️ ظاهر", "إظهار/إخفاء الطبقة الحالية", "", () => this.toggleActiveLayerVisibility());
+    this.layerLockBtn = makeBtn("🔓 مفتوح", "قفل/فتح الطبقة الحالية", "", () => this.toggleActiveLayerLock());
+    const layerDelete = makeBtn("🗑️ طبقة", "حذف الطبقة الحالية وعناصرها", "", () => this.deleteActiveLayer());
+    this.layerInfo = document.createElement("span");
+    css(this.layerInfo, { fontSize: "12px", opacity: "0.82", whiteSpace: "nowrap", flex: "1 1 100%" });
+
     const color = document.createElement("input");
     color.type = "color";
     color.value = this.color;
@@ -276,6 +593,13 @@ class CADDrawingOverlay {
       this.textBtn,
       this.eraserBtn,
       this.touchBtn,
+      this.layerSelect,
+      layerNew,
+      layerRename,
+      this.layerVisibleBtn,
+      this.layerLockBtn,
+      layerDelete,
+      this.layerInfo,
       color,
       size,
       opacityLabel,
@@ -299,6 +623,7 @@ class CADDrawingOverlay {
     this.bindToolbarWindow();
     this.applyToolbarCollapsedState();
     this.refreshToolButtons();
+    this.refreshLayerControls();
   }
 
   createPropertiesPanel() {
@@ -342,6 +667,10 @@ class CADDrawingOverlay {
     this.propTitle = label("خصائص المحدد");
     css(this.propTitle, { fontSize: "13px", fontWeight: "800", opacity: "1", flex: "1 1 100%" });
 
+    this.propLayerSelect = document.createElement("select");
+    css(this.propLayerSelect, { minWidth: "150px", height: "30px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.08)", color: "#fff", padding: "0 8px" });
+    this.propLayerSelect.onchange = () => this.moveSelectedToLayer(this.propLayerSelect.value);
+
     this.propColorInput = document.createElement("input");
     this.propColorInput.type = "color";
     css(this.propColorInput, { width: "38px", height: "32px", borderRadius: "10px", cursor: "pointer" });
@@ -380,6 +709,9 @@ class CADDrawingOverlay {
 
     this.propertiesPanel.append(
       this.propTitle,
+      label("طبقة"),
+      this.propLayerSelect,
+      btn("＋ جديدة", "إنشاء طبقة جديدة ونقل العنصر المحدد إليها", () => this.createAnnotationLayer(true)),
       label("لون"),
       this.propColorInput,
       label("سمك"),
@@ -524,6 +856,7 @@ class CADDrawingOverlay {
     this.canvas.style.pointerEvents = "none";
     this.toolbar.style.display = "block";
     this.applyToolbarCollapsedState();
+    this.loadLayerSettings();
     this.handleFileOrPageChange();
     this.updateViewerTouchBindings();
     this.updateStatus(this.getStatusText());
@@ -660,6 +993,19 @@ class CADDrawingOverlay {
   }
 
   startStrokeFromPointer(e) {
+    const activeLayer = this.getLayerMeta(this.annotationLayerName);
+    if (!activeLayer) {
+      this.updateStatus("اختر طبقة رسم أولاً.");
+      return false;
+    }
+    if (activeLayer.visible === false) {
+      this.updateStatus("الطبقة الحالية مخفية. أظهرها أولاً قبل الرسم.");
+      return false;
+    }
+    if (activeLayer.locked) {
+      this.updateStatus("الطبقة الحالية مقفولة. افتح القفل أو اختر طبقة أخرى.");
+      return false;
+    }
     const bounds = this.getActiveWorldBounds();
     const worldPoint = this.clientToWorld(e.clientX, e.clientY);
     if (!worldPoint) {
@@ -733,6 +1079,13 @@ class CADDrawingOverlay {
     this.dragSelection = null;
 
     if (hit) {
+      this.setActiveLayer(hit.item.layerName || this.annotationLayerName, false);
+      if (this.isLayerLocked(hit.item.layerName || this.defaultAnnotationLayerName)) {
+        this.updateStatus("تم تحديد عنصر على طبقة مقفولة. يمكنك معاينته لكن لا يمكن تحريكه قبل فتح القفل.");
+        this.redraw();
+        this.syncPropertiesFromSelected();
+        return;
+      }
       this.activePointerId = pointerId;
       this.dragSelection = {
         index: hit.index,
@@ -779,6 +1132,7 @@ class CADDrawingOverlay {
     for (let i = this.strokes.length - 1; i >= 0; i--) {
       const item = this.strokes[i];
       if (!item) continue;
+      if (!this.isLayerVisible(item.layerName || this.defaultAnnotationLayerName)) continue;
       if (this.hitTestItem(item, click)) return { index: i, item };
     }
     return null;
@@ -896,6 +1250,10 @@ class CADDrawingOverlay {
       this.updateStatus("لا يوجد عنصر محدد للحذف.");
       return;
     }
+    if (this.isEditingLockedItem()) {
+      this.updateStatus("العنصر المحدد موجود على طبقة مقفولة.");
+      return;
+    }
     this.strokes.splice(this.selectedIndex, 1);
     this.selectedIndex = -1;
     this.dragSelection = null;
@@ -912,7 +1270,13 @@ class CADDrawingOverlay {
 
   pasteSelected() {
     if (!this.clipboardItem) return;
+    const targetLayer = this.getLayerMeta(this.annotationLayerName);
+    if (!targetLayer || targetLayer.visible === false || targetLayer.locked) {
+      this.updateStatus("اختر طبقة ظاهرة وغير مقفولة للصق.");
+      return;
+    }
     const item = this.cloneItem(this.clipboardItem);
+    item.layerName = targetLayer.name;
     const offset = this.getPasteWorldOffset(item);
     if (Array.isArray(item.points)) {
       item.points = item.points.map((pt) => ({
@@ -938,29 +1302,41 @@ class CADDrawingOverlay {
     const item = this.getSelectedItem();
     if (!item) {
       this.propertiesPanel.style.display = "none";
+      this.refreshLayerControls();
       return;
     }
 
     this.propertiesPanel.style.display = "flex";
     const isText = item.tool === "text" || item.kind === "text";
-    if (this.propTitle) this.propTitle.textContent = isText ? "خصائص النص" : (this.isShapeTool(item.tool) ? "خصائص الشكل" : "خصائص الرسم");
-    if (this.propColorInput) this.propColorInput.value = this.colorToHex(item.color || this.color || "#ff3333");
+    const isLocked = this.isEditingLockedItem(item);
+    if (this.propTitle) this.propTitle.textContent = (isText ? "خصائص النص" : (this.isShapeTool(item.tool) ? "خصائص الشكل" : "خصائص الرسم")) + (isLocked ? " • طبقة مقفولة" : "");
+    if (this.propColorInput) {
+      this.propColorInput.value = this.colorToHex(item.color || this.color || "#ff3333");
+      this.propColorInput.disabled = isLocked;
+      this.propColorInput.style.opacity = isLocked ? "0.45" : "1";
+    }
     if (this.propSizeInput) {
-      this.propSizeInput.disabled = isText;
-      this.propSizeInput.style.opacity = isText ? "0.35" : "1";
+      this.propSizeInput.disabled = isText || isLocked;
+      this.propSizeInput.style.opacity = (isText || isLocked) ? "0.35" : "1";
       this.propSizeInput.value = String(Math.max(1, Math.min(60, Math.round(item.screenSize || item.size || this.size || 3))));
     }
-    if (this.propOpacityInput) this.propOpacityInput.value = String(Math.max(0.05, Math.min(1, Number(item.opacity ?? 1))));
+    if (this.propOpacityInput) {
+      this.propOpacityInput.value = String(Math.max(0.05, Math.min(1, Number(item.opacity ?? 1))));
+      this.propOpacityInput.disabled = isLocked;
+      this.propOpacityInput.style.opacity = isLocked ? "0.45" : "1";
+    }
     if (this.propFontSizeInput) {
-      this.propFontSizeInput.disabled = !isText;
-      this.propFontSizeInput.style.opacity = isText ? "1" : "0.35";
+      this.propFontSizeInput.disabled = !isText || isLocked;
+      this.propFontSizeInput.style.opacity = (!isText || isLocked) ? "0.35" : "1";
       this.propFontSizeInput.value = String(Math.max(8, Math.min(160, Math.round(item.fontSize || this.fontSize || 22))));
     }
+    this.refreshLayerControls();
+    if (this.propLayerSelect) this.propLayerSelect.disabled = false;
   }
 
   updateSelectedColor(color) {
     const item = this.getSelectedItem();
-    if (!item) return;
+    if (!item || this.isEditingLockedItem(item)) return;
     item.color = color;
     this.saveNow(false);
     this.redraw();
@@ -968,7 +1344,7 @@ class CADDrawingOverlay {
 
   updateSelectedOpacity(opacity) {
     const item = this.getSelectedItem();
-    if (!item) return;
+    if (!item || this.isEditingLockedItem(item)) return;
     item.opacity = Math.max(0.05, Math.min(1, Number(opacity) || 1));
     this.saveNow(false);
     this.redraw();
@@ -976,7 +1352,7 @@ class CADDrawingOverlay {
 
   updateSelectedSize(screenSize) {
     const item = this.getSelectedItem();
-    if (!item || item.tool === "text" || item.kind === "text") return;
+    if (!item || this.isEditingLockedItem(item) || item.tool === "text" || item.kind === "text") return;
     const nextSize = Math.max(1, Math.min(60, Number(screenSize) || 3));
     const oldSize = Math.max(1, Number(item.screenSize || item.size || this.size || 3));
     item.screenSize = nextSize;
@@ -992,7 +1368,7 @@ class CADDrawingOverlay {
 
   updateSelectedFontSize(fontSize) {
     const item = this.getSelectedItem();
-    if (!item || (item.tool !== "text" && item.kind !== "text")) return;
+    if (!item || this.isEditingLockedItem(item) || (item.tool !== "text" && item.kind !== "text")) return;
     const nextSize = Math.max(8, Math.min(160, Number(fontSize) || 22));
     const oldSize = Math.max(8, Number(item.fontSize || this.fontSize || 22));
     item.fontSize = nextSize;
@@ -1069,6 +1445,11 @@ class CADDrawingOverlay {
   }
 
   handleTextClick(worldPoint, clientX, clientY) {
+    const activeLayer = this.getLayerMeta(this.annotationLayerName);
+    if (!activeLayer || activeLayer.visible === false || activeLayer.locked) {
+      this.updateStatus("اختر طبقة ظاهرة وغير مقفولة لإضافة النص.");
+      return;
+    }
     if (!this.isInsideBounds(worldPoint)) {
       this.updateStatus("النص داخل حدود الملف فقط.");
       return;
@@ -1082,6 +1463,10 @@ class CADDrawingOverlay {
 
     const cleanText = String(nextText).trim();
     if (hit) {
+      if (this.isLayerLocked(hit.item.layerName || this.defaultAnnotationLayerName)) {
+        this.updateStatus("هذا النص موجود على طبقة مقفولة.");
+        return;
+      }
       if (!cleanText) {
         this.strokes.splice(hit.index, 1);
       } else {
@@ -1125,6 +1510,7 @@ class CADDrawingOverlay {
     for (let i = this.strokes.length - 1; i >= 0; i--) {
       const item = this.strokes[i];
       if (item?.tool !== "text" && item?.kind !== "text") continue;
+      if (!this.isLayerVisible(item.layerName || this.defaultAnnotationLayerName)) continue;
       const box = this.getTextCanvasBox(item);
       if (!box) continue;
       const pad = 8 * (window.devicePixelRatio || 1);
@@ -1618,14 +2004,17 @@ class CADDrawingOverlay {
     this.resizeCanvas(false);
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     const clipped = this.pushDrawingClip(this.ctx);
-    this.strokes.forEach((stroke) => this.drawStroke(stroke));
+    this.getRenderableStrokes().forEach((stroke) => this.drawStroke(stroke));
     this.drawSelectionBox();
     if (clipped) this.ctx.restore();
+    this.refreshLayerControls();
   }
 
   drawSelectionBox() {
     if (this.selectedIndex < 0 || !this.strokes[this.selectedIndex]) return;
-    const box = this.getItemCanvasBox(this.strokes[this.selectedIndex]);
+    const item = this.strokes[this.selectedIndex];
+    if (!this.isLayerVisible(item.layerName || this.defaultAnnotationLayerName)) return;
+    const box = this.getItemCanvasBox(item);
     if (!box) return;
 
     const ctx = this.ctx;
@@ -1736,8 +2125,10 @@ class CADDrawingOverlay {
 
   saveNow(showAlert = false, key = this.getStorageKey()) {
     if (!key) return;
-    localStorage.setItem(key, JSON.stringify({ version: 17, strokes: this.strokes, savedAt: new Date().toISOString() }));
+    this.ensureAnnotationLayers();
+    localStorage.setItem(key, JSON.stringify({ version: 18, strokes: this.strokes, savedAt: new Date().toISOString() }));
     this.lastStorageKey = key;
+    this.saveLayerSettings();
     window.dispatchEvent(new CustomEvent("cad:pen-layer-updated"));
     if (showAlert) alert("تم حفظ الرسم على هذا الملف/الصفحة داخل المتصفح.");
   }
@@ -1748,6 +2139,8 @@ class CADDrawingOverlay {
     if (!key) {
       this.strokes = [];
       this.selectedIndex = -1;
+      this.ensureAnnotationLayers();
+      this.refreshLayerControls();
       this.syncPropertiesFromSelected();
       this.redraw();
       return;
@@ -1763,6 +2156,8 @@ class CADDrawingOverlay {
       this.strokes = [];
       this.selectedIndex = -1;
     }
+    this.ensureAnnotationLayers();
+    this.refreshLayerControls();
     this.syncPropertiesFromSelected();
     this.redraw();
     window.dispatchEvent(new CustomEvent("cad:pen-layer-updated"));
@@ -1773,6 +2168,7 @@ class CADDrawingOverlay {
     if (this.lastStorageKey && this.lastStorageKey !== nextKey) {
       this.saveNow(false, this.lastStorageKey);
     }
+    this.loadLayerSettings();
     this.resizeCanvas(false);
     this.loadCurrentPage();
     this.updateStatus(this.getStatusText());
@@ -1840,6 +2236,8 @@ class CADDrawingOverlay {
         type: info.fileType,
         pageCount: info.pageCount,
       },
+      annotationLayers: this.annotationLayers,
+      activeLayer: this.annotationLayerName,
       pages,
     };
 
@@ -1896,6 +2294,13 @@ class CADDrawingOverlay {
     const okReplace = confirm(`سيتم استبدال تعليقات الملف الحالي بالتعليقات الموجودة في JSON.\nعدد العناصر: ${totalItems}\nهل تريد المتابعة؟`);
     if (!okReplace) return;
 
+    if (Array.isArray(data.annotationLayers)) {
+      this.annotationLayers = data.annotationLayers.map((layer) => this.buildLayerMeta(layer?.name, layer?.color, layer || {}));
+      this.annotationLayerName = String(data.activeLayer || this.annotationLayerName || this.defaultAnnotationLayerName);
+      this.ensureAnnotationLayers();
+      this.saveLayerSettings();
+    }
+
     const maxPage = Math.max(info.pageCount, ...data.pages.map((p) => Number(p.page) || 1));
     for (let pageNo = 1; pageNo <= maxPage; pageNo++) {
       const pageData = data.pages.find((p) => Number(p.page) === pageNo);
@@ -1909,6 +2314,7 @@ class CADDrawingOverlay {
       }));
     }
 
+    this.loadLayerSettings();
     this.loadCurrentPage();
     window.dispatchEvent(new CustomEvent("cad:pen-layer-updated"));
     this.updateStatus(`تم فتح JSON - ${totalItems} عنصر`);
@@ -1936,8 +2342,10 @@ class CADDrawingOverlay {
       return;
     }
 
-    if (!window.PDFLib?.PDFDocument) {
-      alert("مكتبة PDF-Lib غير محملة. تأكد من وجود اتصال إنترنت أو أضف pdf-lib محلياً.");
+    const hasLocalExporter = !!window.EssamPdfExport?.exportAnnotatedPdf;
+    const hasPdfLib = !!window.PDFLib?.PDFDocument;
+    if (!hasLocalExporter && !hasPdfLib) {
+      alert("محرك تصدير PDF غير محمل. تأكد من وجود ملف ./libs/pdf-lib/pdf-lib.min.js داخل المشروع.");
       return;
     }
 
@@ -1962,28 +2370,42 @@ class CADDrawingOverlay {
 
     try {
       const bytes = await file.arrayBuffer();
-      const PDFDocument = window.PDFLib.PDFDocument;
-      const degrees = window.PDFLib.degrees;
-      const pdfDoc = await PDFDocument.load(bytes);
-      const pages = pdfDoc.getPages();
       const fallbackBounds = this.getPageWorldBounds();
+      let outBytes;
 
-      for (let i = 0; i < pages.length; i++) {
-        const pageNo = i + 1;
-        const strokes = allPageStrokes[pageNo] || [];
-        if (!strokes.length) continue;
+      if (hasLocalExporter) {
+        outBytes = await window.EssamPdfExport.exportAnnotatedPdf({
+          pdfBytes: bytes,
+          renderOverlayForPage: ({ pageNumber, pageWidth, pageHeight }) => {
+            const strokes = this.getRenderableStrokes(allPageStrokes[pageNumber] || []);
+            if (!strokes.length) return null;
+            return this.renderPageAnnotationsToPng(strokes, pageWidth, pageHeight, fallbackBounds);
+          },
+          onProgress: (message) => this.updateStatus(message),
+        });
+      } else {
+        const PDFDocument = window.PDFLib.PDFDocument;
+        const degrees = window.PDFLib.degrees;
+        const pdfDoc = await PDFDocument.load(bytes);
+        const pages = pdfDoc.getPages();
 
-        const page = pages[i];
-        const pageWidth = page.getWidth();
-        const pageHeight = page.getHeight();
-        const overlayDataUrl = this.renderPageAnnotationsToPng(strokes, pageWidth, pageHeight, fallbackBounds);
-        if (!overlayDataUrl) continue;
+        for (let i = 0; i < pages.length; i++) {
+          const pageNo = i + 1;
+          const strokes = this.getRenderableStrokes(allPageStrokes[pageNo] || []);
+          if (!strokes.length) continue;
 
-        const overlayPng = await pdfDoc.embedPng(overlayDataUrl);
-        this.drawOverlayRight90OnPdfPage(page, overlayPng, pageWidth, pageHeight, degrees);
+          const page = pages[i];
+          const pageWidth = page.getWidth();
+          const pageHeight = page.getHeight();
+          const overlayDataUrl = this.renderPageAnnotationsToPng(strokes, pageWidth, pageHeight, fallbackBounds);
+          if (!overlayDataUrl) continue;
+
+          const overlayPng = await pdfDoc.embedPng(overlayDataUrl);
+          this.drawOverlayRight90OnPdfPage(page, overlayPng, pageWidth, pageHeight, degrees);
+        }
+
+        outBytes = await pdfDoc.save();
       }
-
-      const outBytes = await pdfDoc.save();
       const blob = new Blob([outBytes], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -2133,7 +2555,7 @@ class CADDrawingOverlay {
       }
     };
 
-    for (const item of strokes) {
+    for (const item of this.getRenderableStrokes(strokes)) {
       if (!item || !Array.isArray(item.points) || !item.points.length) continue;
       if (item.coordSpace !== "world") continue;
 
@@ -2177,7 +2599,7 @@ class CADDrawingOverlay {
 
   get3DEntities() {
     const entities = [];
-    const items = Array.isArray(this.strokes) ? this.strokes : [];
+    const items = this.getRenderableStrokes(Array.isArray(this.strokes) ? this.strokes : []);
     for (const item of items) {
       const converted = this.itemTo3DEntities(item);
       if (converted?.length) entities.push(...converted);

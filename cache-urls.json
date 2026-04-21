@@ -33,6 +33,7 @@
   "./libs/jsoneditor/jsoneditor.min.js",
   "./libs/pdf/pdf.min.js",
   "./libs/pdf/pdf.worker.min.js",
+  "./libs/pdf-lib/pdf-lib.min.js",
   "./libs/x-viewer/core/dist/chunks/libredwg-web-DR0Rasye.js",
   "./libs/x-viewer/core/dist/index.esm.js",
   "./libs/x-viewer/plugins/dist/index.esm.js",
