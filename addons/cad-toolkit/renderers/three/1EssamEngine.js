@@ -24,12 +24,11 @@ export class EssamEngine {
         this.visualSettings = {
             quality: 'medium',
             shadows: true,
-            shadowLevel: 1.0,
             bloom: true,
-            bloomLevel: 1.0,
             sunIntensity: 1.0,
             realLights: true,
-            realLightsLevel: 1.0,
+            roomAwareLights: true,
+            vrCurrentRoomLights: false,
             realLightCap: 32,
             realLightDensity: 1.0,
             realLightIntensityScale: 1.0,
@@ -47,19 +46,22 @@ export class EssamEngine {
         this.sunControlPanel = null;
         this.generatedLights = [];
         this.currentLightCandidates = [];
+        this.currentRoomZones = [];
         this.xrPerformanceActive = false;
         this.isMobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
         this.performancePanel = null;
         this.performanceContent = null;
         this.performanceVisible = true;
-        this.qualityConfig = null;
-        this.sunControlRefs = {};
         this.performanceCollapsed = false;
         this.perfFrames = 0;
         this.perfFps = 0;
         this.perfLastTick = performance.now();
         this.perfLastRefresh = 0;
         this.perfRefreshMs = 600;
+        this.currentVrRoomZoneId = null;
+        this.lastVrRoomLightUpdate = 0;
+        this.vrRoomLightRefreshMs = 180;
+        this._tmpWorldPos = new THREE.Vector3();
 
         try {
             const savedVisible = localStorage.getItem('essam-3d-perf-visible');
@@ -159,16 +161,12 @@ export class EssamEngine {
             background: 'rgba(0,0,0,0.6)', padding: '10px', borderRadius: '8px',
             color: 'white', fontFamily: 'sans-serif', fontSize: '12px',
             border: '1px solid rgba(255,255,255,0.2)', backdropFilter: 'blur(4px)',
-            minWidth: '240px'
+            minWidth: '220px'
         });
         div.innerHTML = `
             <div style="display:flex; flex-direction:column; gap:8px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-                    <label style="font-weight:bold;">☀ Sun Power</label>
-                    <span data-role="sun-value" style="color:#9ec8ff; font-weight:bold;">1.0x</span>
-                </div>
-                <input data-role="sun" type="range" min="0" max="2" step="0.05" value="1.0" style="cursor:pointer; width:100%;">
-
+                <label style="font-weight:bold;">☀ Sun Power</label>
+                <input data-role="sun" type="range" min="0" max="2" step="0.1" value="1.0" style="cursor:pointer; width:100%;">
                 <label style="font-weight:bold; margin-top:4px;">🎛 Quality</label>
                 <select data-role="quality" style="width:100%; padding:4px; background:#111; color:#fff; border:1px solid #444; border-radius:4px;">
                     <option value="low">Low</option>
@@ -176,51 +174,41 @@ export class EssamEngine {
                     <option value="high">High</option>
                     <option value="vr">VR</option>
                 </select>
-
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:4px;">
-                    <label style="font-weight:bold;">🌑 Shadows</label>
-                    <span data-role="shadows-value" style="color:#9ec8ff; font-weight:bold;">100%</span>
-                </div>
-                <input data-role="shadows" type="range" min="0" max="100" step="1" value="100" style="cursor:pointer; width:100%;">
-
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:4px;">
-                    <label style="font-weight:bold;">✨ Bloom</label>
-                    <span data-role="bloom-value" style="color:#9ec8ff; font-weight:bold;">100%</span>
-                </div>
-                <input data-role="bloom" type="range" min="0" max="200" step="1" value="100" style="cursor:pointer; width:100%;">
-
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:4px;">
-                    <label style="font-weight:bold;">💡 Real Lights</label>
-                    <span data-role="real-lights-value" style="color:#9ec8ff; font-weight:bold;">100%</span>
-                </div>
-                <input data-role="real-lights" type="range" min="0" max="150" step="1" value="100" style="cursor:pointer; width:100%;">
-
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                    <input data-role="shadows" type="checkbox" checked>
+                    <span>Enable Shadows</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                    <input data-role="bloom" type="checkbox" checked>
+                    <span>Enable Bloom</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                    <input data-role="real-lights" type="checkbox" checked>
+                    <span>Real Light Emitters</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                    <input data-role="room-aware-lights" type="checkbox" checked>
+                    <span>Room-aware Lights</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                    <input data-role="vr-current-room-lights" type="checkbox">
+                    <span>VR Current Room Lights</span>
+                </label>
                 <button data-role="perf-toggle" type="button" style="margin-top:6px; width:100%; padding:6px 8px; background:#1f2f46; color:#fff; border:1px solid #3f5b82; border-radius:4px; cursor:pointer;">📊 Monitor</button>
             </div>
         `;
 
-        this.sunControlRefs = {
-            sun: div.querySelector('[data-role="sun"]'),
-            sunValue: div.querySelector('[data-role="sun-value"]'),
-            quality: div.querySelector('[data-role="quality"]'),
-            shadows: div.querySelector('[data-role="shadows"]'),
-            shadowsValue: div.querySelector('[data-role="shadows-value"]'),
-            bloom: div.querySelector('[data-role="bloom"]'),
-            bloomValue: div.querySelector('[data-role="bloom-value"]'),
-            realLights: div.querySelector('[data-role="real-lights"]'),
-            realLightsValue: div.querySelector('[data-role="real-lights-value"]'),
-        };
-
-        this.sunControlRefs.sun.oninput = (e) => this.updateSun(parseFloat(e.target.value));
-        this.sunControlRefs.quality.onchange = (e) => this.applyQualityPreset(e.target.value);
-        this.sunControlRefs.shadows.oninput = (e) => this.setShadowLevel((parseFloat(e.target.value) || 0) / 100);
-        this.sunControlRefs.bloom.oninput = (e) => this.setBloomLevel((parseFloat(e.target.value) || 0) / 100);
-        this.sunControlRefs.realLights.oninput = (e) => this.setRealLightsLevel((parseFloat(e.target.value) || 0) / 100);
+        div.querySelector('[data-role="sun"]').oninput = (e) => this.updateSun(parseFloat(e.target.value));
+        div.querySelector('[data-role="quality"]').onchange = (e) => this.applyQualityPreset(e.target.value);
+        div.querySelector('[data-role="shadows"]').onchange = (e) => this.setShadowsEnabled(!!e.target.checked);
+        div.querySelector('[data-role="bloom"]').onchange = (e) => this.setBloomEnabled(!!e.target.checked);
+        div.querySelector('[data-role="real-lights"]').onchange = (e) => this.setRealLightsEnabled(!!e.target.checked);
+        div.querySelector('[data-role="room-aware-lights"]').onchange = (e) => this.setRoomAwareLightsEnabled(!!e.target.checked);
+        div.querySelector('[data-role="vr-current-room-lights"]').onchange = (e) => this.setVRCurrentRoomLightsEnabled(!!e.target.checked);
         div.querySelector('[data-role="perf-toggle"]').onclick = () => this.togglePerformanceMonitor();
 
         this.sunControlPanel = div;
         this.container.appendChild(div);
-        this.syncSunControlUI();
     }
 
     createPerformanceMonitor() {
@@ -366,7 +354,11 @@ export class EssamEngine {
             scene: sceneStats,
             generatedLights: sceneStats.lights,
             lightCandidates: this.currentLightCandidates?.length || 0,
+            roomZones: this.currentRoomZones?.length || 0,
             realLights: !!this.visualSettings?.realLights,
+            roomAwareLights: !!this.visualSettings?.roomAwareLights,
+            vrCurrentRoomLights: !!this.visualSettings?.vrCurrentRoomLights,
+            activeVrRoomZoneId: this.currentVrRoomZoneId === '__fallback__' ? 'Outside/None' : (this.currentVrRoomZoneId || null),
             shadows: !!this.visualSettings?.shadows,
             bloom: !!this.visualSettings?.bloom,
             buildStats,
@@ -388,7 +380,9 @@ export class EssamEngine {
             `FPS: ${this.formatPerfNumber(s.fps, 1)}    XR: ${s.xr ? 'ON' : 'OFF'}    Quality: ${s.quality.toUpperCase()}`,
             `Draw Calls: ${s.calls}    Triangles: ${s.triangles.toLocaleString?.() || s.triangles}`,
             `Scene Meshes: ${s.scene.visibleMeshes}/${s.scene.meshes}    Lines: ${s.scene.lines}`,
-            `Real Lights: ${s.generatedLights}/${s.lightCandidates} (${Math.round((this.visualSettings.realLightsLevel ?? 1) * 100)}%)    Shadows: ${s.shadows ? 'ON' : 'OFF'} (${Math.round((this.visualSettings.shadowLevel ?? 1) * 100)}%)    Bloom: ${s.bloom ? 'ON' : 'OFF'} (${Math.round((this.visualSettings.bloomLevel ?? 1) * 100)}%)`,
+            `Real Lights: ${s.generatedLights}/${s.lightCandidates}    Room-aware: ${s.roomAwareLights ? 'ON' : 'OFF'}    Zones: ${s.roomZones}`,
+            `VR Current Room: ${s.vrCurrentRoomLights ? 'ON' : 'OFF'}    Active Zone: ${s.activeVrRoomZoneId || '—'}`,
+            `Shadows: ${s.shadows ? 'ON' : 'OFF'}    Bloom: ${s.bloom ? 'ON' : 'OFF'}`,
             `GPU Geo/Tex: ${s.geometries}/${s.textures}    DPR: ${this.formatPerfNumber(s.pixelRatio, 2)}`,
         ];
 
@@ -409,8 +403,8 @@ export class EssamEngine {
             if (Number.isFinite(build.meshBatchCount) || Number.isFinite(build.lineBatchCount)) {
                 lines.push(`Batches M/L: ${build.meshBatchCount ?? '—'} / ${build.lineBatchCount ?? '—'}`);
             }
-            if (Number.isFinite(build.snapPoints) || Number.isFinite(build.lightCandidates)) {
-                lines.push(`Snap Points: ${build.snapPoints ?? '—'}    Light Candidates: ${build.lightCandidates ?? '—'}`);
+            if (Number.isFinite(build.snapPoints) || Number.isFinite(build.lightCandidates) || Number.isFinite(build.roomZones)) {
+                lines.push(`Snap Points: ${build.snapPoints ?? '—'}    Light Candidates: ${build.lightCandidates ?? '—'}    Zones: ${build.roomZones ?? '—'}`);
             }
         }
 
@@ -449,38 +443,14 @@ export class EssamEngine {
         this.xrPerformanceActive = true;
         try { this.renderer.xr.setFoveation?.(1.0); } catch (_) {}
         this.applyQualityPreset(this.visualSettings.quality || 'medium');
+        this.applyVRCurrentRoomLightBinding(true);
     }
 
     handleXRSessionEnd() {
         this.xrPerformanceActive = false;
         this.applyQualityPreset(this.visualSettings.quality || 'medium');
+        this.applyVRCurrentRoomLightBinding(true);
     }
-
-    clampRange(value, min, max) {
-        return Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
-    }
-
-    syncSunControlUI() {
-        if (!this.sunControlRefs) return;
-        const refs = this.sunControlRefs;
-        if (refs.sun) refs.sun.value = String(this.clampRange(this.visualSettings.sunIntensity ?? 1, 0, 2));
-        if (refs.sunValue) refs.sunValue.textContent = `${(this.visualSettings.sunIntensity ?? 1).toFixed(2)}x`;
-        if (refs.quality) refs.quality.value = this.visualSettings.quality || 'medium';
-
-        const shadowPct = Math.round(this.clampRange(this.visualSettings.shadowLevel ?? 1, 0, 1) * 100);
-        const bloomPct = Math.round(this.clampRange(this.visualSettings.bloomLevel ?? 1, 0, 2) * 100);
-        const lightPct = Math.round(this.clampRange(this.visualSettings.realLightsLevel ?? 1, 0, 1.5) * 100);
-
-        if (refs.shadows) refs.shadows.value = String(shadowPct);
-        if (refs.shadowsValue) refs.shadowsValue.textContent = shadowPct <= 0 ? 'Off' : `${shadowPct}%`;
-
-        if (refs.bloom) refs.bloom.value = String(bloomPct);
-        if (refs.bloomValue) refs.bloomValue.textContent = bloomPct <= 0 ? 'Off' : `${bloomPct}%`;
-
-        if (refs.realLights) refs.realLights.value = String(lightPct);
-        if (refs.realLightsValue) refs.realLightsValue.textContent = lightPct <= 0 ? 'Off' : `${lightPct}%`;
-    }
-
 
     invalidateShadows() {
         if (!this.renderer?.shadowMap?.enabled) return;
@@ -494,73 +464,37 @@ export class EssamEngine {
 
         const val = Math.min(0.14, Math.max(0.03, intensity * 0.09));
         this.scene.background.setRGB(val, val, val);
-        this.syncSunControlUI();
     }
 
     applyQualityPreset(preset) {
         this.visualSettings.quality = preset;
         const baseCfg = this.getQualityConfig(preset);
         const cfg = this.getRuntimeAdjustedConfig(baseCfg);
-        this.qualityConfig = { ...cfg };
 
         this.renderer.setPixelRatio(Math.min(cfg.pixelRatio, window.devicePixelRatio || 1));
         this.renderer.toneMappingExposure = cfg.exposure;
+        this.setShadowMapSize(cfg.mapSize);
+        this.setShadowsEnabled(cfg.shadows);
+        this.setBloomEnabled(cfg.bloom);
+        this.setRealLightBudget(cfg.lightCap, cfg.lightDensity, cfg.lightIntensityScale);
+        this.setRealLightsEnabled(cfg.realLights);
 
-        this.setShadowLevel(this.visualSettings.shadowLevel ?? (cfg.shadows ? 1 : 0));
-        this.setBloomLevel(this.visualSettings.bloomLevel ?? (cfg.bloom ? 1 : 0));
-        this.setRealLightsLevel(this.visualSettings.realLightsLevel ?? (cfg.realLights ? 1 : 0));
-        this.syncSunControlUI();
+        if (this.sunControlPanel) {
+            const q = this.sunControlPanel.querySelector('[data-role="quality"]');
+            const s = this.sunControlPanel.querySelector('[data-role="shadows"]');
+            const b = this.sunControlPanel.querySelector('[data-role="bloom"]');
+            const rl = this.sunControlPanel.querySelector('[data-role="real-lights"]');
+            if (q) q.value = preset;
+            if (s) s.checked = !!this.visualSettings.shadows;
+            if (b) b.checked = !!this.visualSettings.bloom;
+            const ral = this.sunControlPanel.querySelector('[data-role="room-aware-lights"]');
+            const vrr = this.sunControlPanel.querySelector('[data-role="vr-current-room-lights"]');
+            if (rl) rl.checked = !!this.visualSettings.realLights;
+            if (ral) ral.checked = !!this.visualSettings.roomAwareLights;
+            if (vrr) vrr.checked = !!this.visualSettings.vrCurrentRoomLights;
+        }
+
         this.onResize();
-    }
-
-
-    setShadowLevel(level) {
-        const normalized = this.clampRange(level, 0, 1);
-        this.visualSettings.shadowLevel = normalized;
-        const cfg = this.qualityConfig || this.getRuntimeAdjustedConfig(this.getQualityConfig(this.visualSettings.quality || 'medium'));
-        const maxMapSize = Math.max(512, cfg.mapSize || 1024);
-        const mapSize = normalized <= 0.001 ? 512 : Math.round(512 + (maxMapSize - 512) * normalized);
-        this.setShadowMapSize(mapSize);
-        this.setShadowsEnabled(normalized > 0.001);
-        if (this.floorShadowCatcher?.material) {
-            this.floorShadowCatcher.material.opacity = normalized <= 0.001 ? 0 : (0.06 + normalized * 0.18);
-            this.floorShadowCatcher.material.needsUpdate = true;
-        }
-        this.syncSunControlUI();
-    }
-
-    setBloomLevel(level) {
-        const normalized = this.clampRange(level, 0, 2);
-        this.visualSettings.bloomLevel = normalized;
-        this.setBloomEnabled(normalized > 0.001);
-        if (this.bloomPass) {
-            this.bloomPass.strength = 1.2 * normalized;
-            this.bloomPass.radius = 0.18 + Math.min(0.55, normalized * 0.18);
-            this.bloomPass.threshold = Math.max(0.6, 1.02 - (Math.min(2, normalized) * 0.18));
-        }
-        this.syncSunControlUI();
-    }
-
-    setRealLightsLevel(level) {
-        const normalized = this.clampRange(level, 0, 1.5);
-        this.visualSettings.realLightsLevel = normalized;
-        const cfg = this.qualityConfig || this.getRuntimeAdjustedConfig(this.getQualityConfig(this.visualSettings.quality || 'medium'));
-        if (normalized <= 0.001) {
-            this.setRealLightBudget(0, 0, 0);
-            this.setRealLightsEnabled(false);
-            this.syncSunControlUI();
-            return;
-        }
-
-        const baseCap = Math.max(1, cfg.lightCap || 8);
-        const baseDensity = Math.max(0.05, cfg.lightDensity || 0.35);
-        const baseIntensity = Math.max(0.2, cfg.lightIntensityScale || 0.85);
-        const cap = Math.max(1, Math.round(baseCap * normalized));
-        const density = baseDensity * normalized;
-        const intensityScale = baseIntensity * (0.3 + normalized * 0.7);
-        this.setRealLightBudget(cap, density, intensityScale);
-        this.setRealLightsEnabled(true);
-        this.syncSunControlUI();
     }
 
     setShadowMapSize(size) {
@@ -610,6 +544,17 @@ export class EssamEngine {
         this.refreshGeneratedLights();
     }
 
+    setRoomAwareLightsEnabled(enabled) {
+        this.visualSettings.roomAwareLights = !!enabled;
+        this.refreshGeneratedLights();
+    }
+
+    setVRCurrentRoomLightsEnabled(enabled) {
+        this.visualSettings.vrCurrentRoomLights = !!enabled;
+        this.applyVRCurrentRoomLightBinding(true);
+        this.updatePerformanceMonitor(true);
+    }
+
     clearGeneratedLights() {
         if (!this.generatedLights?.length) return;
         for (const light of this.generatedLights) {
@@ -617,6 +562,7 @@ export class EssamEngine {
             this.scene.remove(light);
         }
         this.generatedLights = [];
+        this.currentVrRoomZoneId = null;
     }
 
     selectLightCandidates(candidates) {
@@ -624,26 +570,68 @@ export class EssamEngine {
         const requested = Math.max(0, Math.floor((candidates?.length || 0) * density));
         const cap = this.visualSettings.realLightCap ?? requested;
         const target = Math.max(0, Math.min(cap, requested || 0, candidates?.length || 0));
-        if (!candidates?.length || !target) return [];
-        if (target >= candidates.length) return candidates.slice();
+        if (!target || !Array.isArray(candidates) || !candidates.length) return [];
 
-        if (this.renderer?.xr?.isPresenting && this.camera) {
-            const camPos = new THREE.Vector3();
-            this.camera.getWorldPosition(camPos);
-            return candidates
-                .map((candidate) => ({ candidate, d2: (candidate.x - camPos.x) ** 2 + (candidate.y - camPos.y) ** 2 + (candidate.z - camPos.z) ** 2 }))
-                .sort((a, b) => a.d2 - b.d2)
-                .slice(0, target)
-                .map((entry) => entry.candidate);
+        const roomAware = this.visualSettings.roomAwareLights !== false;
+        if (!roomAware) {
+            if (target >= candidates.length) return [...candidates];
+            const selected = [];
+            const step = candidates.length / target;
+            for (let i = 0; i < target; i++) {
+                const idx = Math.min(candidates.length - 1, Math.floor(i * step));
+                selected.push(candidates[idx]);
+            }
+            return selected;
         }
 
+        const grouped = new Map();
+        const fallback = [];
+        for (const candidate of candidates) {
+            const zoneId = candidate?.roomZoneId;
+            if (zoneId) {
+                if (!grouped.has(zoneId)) grouped.set(zoneId, []);
+                grouped.get(zoneId).push(candidate);
+            } else {
+                fallback.push(candidate);
+            }
+        }
+
+        const buckets = [...grouped.values()].filter((arr) => arr.length);
         const selected = [];
-        const step = candidates.length / target;
-        for (let i = 0; i < target; i++) {
-            const idx = Math.min(candidates.length - 1, Math.floor(i * step));
-            selected.push(candidates[idx]);
+        let round = 0;
+        while (selected.length < target && buckets.length) {
+            let progressed = false;
+            for (const bucket of buckets) {
+                if (round < bucket.length) {
+                    selected.push(bucket[round]);
+                    progressed = true;
+                    if (selected.length >= target) break;
+                }
+            }
+            if (!progressed) break;
+            round++;
         }
-        return selected;
+
+        if (selected.length < target && fallback.length) {
+            const need = target - selected.length;
+            const step = fallback.length / need;
+            for (let i = 0; i < need; i++) {
+                const idx = Math.min(fallback.length - 1, Math.floor(i * step));
+                selected.push(fallback[idx]);
+            }
+        }
+
+        if (selected.length < target) {
+            const remaining = candidates.filter((c) => !selected.includes(c));
+            const need = target - selected.length;
+            const step = remaining.length / Math.max(need, 1);
+            for (let i = 0; i < need && remaining.length; i++) {
+                const idx = Math.min(remaining.length - 1, Math.floor(i * step));
+                selected.push(remaining[idx]);
+            }
+        }
+
+        return selected.slice(0, target);
     }
 
     refreshGeneratedLights() {
@@ -651,12 +639,43 @@ export class EssamEngine {
         if (!this.visualSettings.realLights) return;
         const selected = this.selectLightCandidates(this.currentLightCandidates);
         const intensityScale = this.visualSettings.realLightIntensityScale ?? 1.0;
+        const roomAware = this.visualSettings.roomAwareLights !== false;
+
         for (const candidate of selected) {
-            const distance = Math.max(2.8, Math.min(candidate.range || 4.2, Math.max(4.6, (candidate.y || 3) * 1.45)));
-            const targetY = candidate.targetY ?? Math.max(0.1, (candidate.y || 2.8) - Math.max(1.8, (this.settings?.height || 3.0) * 0.85));
+            const zone = roomAware ? candidate?.roomZone : null;
             const color = candidate.color || 0xffffdd;
             const baseIntensity = (candidate.intensity || 1.5) * intensityScale;
 
+            if (zone) {
+                const zoneFloorY = zone.floorY ?? 0;
+                const zoneCeilingY = zone.ceilingY ?? candidate.y ?? 3;
+                const verticalSpan = Math.max(1.8, zoneCeilingY - zoneFloorY);
+                const distance = Math.max(2.2, Math.min(candidate.range || zone.recommendedLightRange || 4.2, zone.recommendedLightRange || (verticalSpan * 1.5)));
+                const targetY = candidate.targetY ?? Math.max(zoneFloorY + 0.04, Math.min(zoneFloorY + 0.12, (candidate.y || zoneCeilingY) - 0.45));
+                const angle = Math.max(Math.PI / 10, Math.min(candidate.spotAngle || zone.recommendedSpotAngle || (Math.PI / 4.6), Math.PI / 3.8));
+                const light = new THREE.SpotLight(color, baseIntensity * 1.18, distance, angle, candidate.spotPenumbra ?? 0.38, 2.1);
+                light.position.set(candidate.x || 0, candidate.y || 0, candidate.z || 0);
+                light.castShadow = false;
+                light.userData.generatedRealLight = true;
+                light.userData.layer = candidate.layer || 'lights';
+                light.userData.roomZoneId = zone.id || null;
+                const target = new THREE.Object3D();
+                target.position.set(
+                    (candidate.x || 0) + ((candidate.dirX || 0) * 0.08),
+                    targetY,
+                    (candidate.z || 0) + ((candidate.dirZ || 0) * 0.08)
+                );
+                target.userData.generatedRealLightTarget = true;
+                target.userData.roomZoneId = zone.id || null;
+                this.scene.add(target);
+                light.target = target;
+                this.scene.add(light);
+                this.generatedLights.push(light, target);
+                continue;
+            }
+
+            const distance = Math.max(2.8, Math.min(candidate.range || 4.2, Math.max(4.6, (candidate.y || 3) * 1.45)));
+            const targetY = candidate.targetY ?? Math.max(0.1, (candidate.y || 2.8) - Math.max(1.8, (this.settings?.height || 3.0) * 0.85));
             if (candidate.source === 'strip') {
                 const light = new THREE.SpotLight(color, baseIntensity * 1.35, distance, Math.PI / 4.2, 0.65, 2.2);
                 light.position.set(candidate.x || 0, candidate.y || 0, candidate.z || 0);
@@ -665,6 +684,8 @@ export class EssamEngine {
                 light.userData.layer = candidate.layer || 'lights';
                 const target = new THREE.Object3D();
                 target.position.set(candidate.x || 0, targetY, candidate.z || 0);
+                target.userData.generatedRealLightTarget = true;
+                target.userData.roomZoneId = candidate?.roomZoneId || null;
                 this.scene.add(target);
                 light.target = target;
                 this.scene.add(light);
@@ -675,10 +696,87 @@ export class EssamEngine {
                 light.castShadow = false;
                 light.userData.generatedRealLight = true;
                 light.userData.layer = candidate.layer || 'lights';
+                light.userData.roomZoneId = candidate?.roomZoneId || null;
                 this.scene.add(light);
                 this.generatedLights.push(light);
             }
         }
+        this.applyVRCurrentRoomLightBinding(true);
+    }
+
+
+    findRoomZoneAt(x, z) {
+        if (!Array.isArray(this.currentRoomZones) || !this.currentRoomZones.length) return null;
+        let bestInside = null;
+        let bestInsideArea = Infinity;
+        let bestNear = null;
+        let bestNearDist = Infinity;
+        for (const zone of this.currentRoomZones) {
+            if (!zone?.bounds) continue;
+            if (this.isPointInsideZone(x, z, zone)) {
+                if ((zone.area || Infinity) < bestInsideArea) {
+                    bestInsideArea = zone.area || Infinity;
+                    bestInside = zone;
+                }
+                continue;
+            }
+            const dx = x - (zone.centroid?.x || 0);
+            const dz = z - (zone.centroid?.z || 0);
+            const distSq = (dx * dx) + (dz * dz);
+            if (distSq <= (zone.searchRadiusSq || Infinity) && distSq < bestNearDist) {
+                bestNearDist = distSq;
+                bestNear = zone;
+            }
+        }
+        return bestInside || bestNear || null;
+    }
+
+    isPointInsideZone(x, z, zone) {
+        if (!zone?.points?.length || !zone.bounds) return false;
+        if (x < zone.bounds.minX || x > zone.bounds.maxX || z < zone.bounds.minZ || z > zone.bounds.maxZ) return false;
+        let inside = false;
+        const pts = zone.points;
+        for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+            const xi = pts[i].x, zi = pts[i].z;
+            const xj = pts[j].x, zj = pts[j].z;
+            const intersect = ((zi > z) !== (zj > z)) && (x < ((xj - xi) * (z - zi)) / ((zj - zi) || 1e-8) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    }
+
+    applyVRCurrentRoomLightBinding(force = false) {
+        const lights = this.generatedLights?.filter((obj) => obj?.isLight) || [];
+        if (!lights.length) {
+            this.currentVrRoomZoneId = null;
+            return;
+        }
+
+        const active = !!(this.renderer?.xr?.isPresenting && this.visualSettings?.vrCurrentRoomLights);
+        if (!active) {
+            const changed = force || this.currentVrRoomZoneId !== null || lights.some((light) => light.visible === false);
+            if (!changed) return;
+            this.currentVrRoomZoneId = null;
+            for (const light of lights) light.visible = true;
+            this.updatePerformanceMonitor(true);
+            return;
+        }
+
+        const now = performance.now();
+        if (!force && (now - this.lastVrRoomLightUpdate) < this.vrRoomLightRefreshMs) return;
+        this.lastVrRoomLightUpdate = now;
+
+        const worldPos = this.camera.getWorldPosition(this._tmpWorldPos);
+        const zone = this.findRoomZoneAt(worldPos.x, worldPos.z);
+        const zoneId = zone?.id || '__fallback__';
+        if (!force && zoneId === this.currentVrRoomZoneId) return;
+        this.currentVrRoomZoneId = zoneId;
+
+        for (const light of lights) {
+            const lightZoneId = light.userData?.roomZoneId || null;
+            light.visible = !lightZoneId || lightZoneId === zone?.id;
+        }
+        this.updatePerformanceMonitor(true);
     }
 
     setBloomEnabled(enabled) {
@@ -759,6 +857,7 @@ export class EssamEngine {
         const result = this.sceneBuilder.build(dxf, layerConfig, globalSettings, forcedScale);
         this.currentRoomGroup = result.roomGroup;
         this.currentLightCandidates = Array.isArray(result.lightCandidates) ? result.lightCandidates : [];
+        this.currentRoomZones = Array.isArray(result.roomZones) ? result.roomZones : [];
         this.settings.height = result.finalHeight;
         this.interactionManager.updateTargets(result.roomGroup, result.snapPoints);
 
@@ -818,6 +917,7 @@ export class EssamEngine {
 
         if (this.renderer.xr.isPresenting) {
             this.interactionManager.updateVR();
+            this.applyVRCurrentRoomLightBinding();
             this.renderer.render(this.scene, this.camera);
         } else {
             this.controls.update();
