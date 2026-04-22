@@ -60,6 +60,10 @@ export class EssamEngine {
         this.perfLastTick = performance.now();
         this.perfLastRefresh = 0;
         this.perfRefreshMs = 600;
+        this.lastVRLightsRefresh = 0;
+        this.vrLightRefreshMs = 350;
+        this.lastVRLightAnchor = new THREE.Vector3();
+        this.currentGeneratedLightSignature = '';
 
         try {
             const savedVisible = localStorage.getItem('essam-3d-perf-visible');
@@ -439,20 +443,26 @@ export class EssamEngine {
             bloom: false,
             shadows: !!cfg.shadows,
             realLights: !!cfg.realLights,
-            lightCap: cfg.realLights ? Math.max(1, Math.min(isMobile ? 4 : 8, Math.ceil((cfg.lightCap || 0) * 0.3))) : 0,
-            lightDensity: cfg.realLights ? Math.min(0.45, cfg.lightDensity || 1) : 0,
-            lightIntensityScale: cfg.realLights ? Math.min(0.9, cfg.lightIntensityScale || 1) : 0,
+            lightCap: cfg.realLights ? Math.max(2, Math.min(isMobile ? 6 : 12, Math.ceil((cfg.lightCap || 0) * 0.55))) : 0,
+            lightDensity: cfg.realLights ? Math.min(0.75, Math.max(isMobile ? 0.5 : 0.6, cfg.lightDensity || 1)) : 0,
+            lightIntensityScale: cfg.realLights ? Math.min(0.95, Math.max(0.7, cfg.lightIntensityScale || 1)) : 0,
         };
     }
 
     handleXRSessionStart() {
         this.xrPerformanceActive = true;
+        this.lastVRLightsRefresh = 0;
+        this.currentGeneratedLightSignature = '';
+        this.lastVRLightAnchor.set(999999, 999999, 999999);
         try { this.renderer.xr.setFoveation?.(1.0); } catch (_) {}
         this.applyQualityPreset(this.visualSettings.quality || 'medium');
+        this.updateDynamicVRLights(true);
     }
 
     handleXRSessionEnd() {
         this.xrPerformanceActive = false;
+        this.lastVRLightsRefresh = 0;
+        this.currentGeneratedLightSignature = '';
         this.applyQualityPreset(this.visualSettings.quality || 'medium');
     }
 
@@ -619,19 +629,51 @@ export class EssamEngine {
         this.generatedLights = [];
     }
 
+    buildLightSelectionSignature(selected) {
+        if (!selected?.length) return '';
+        return selected
+            .map((candidate) => [candidate.layer || '', (candidate.x || 0).toFixed(2), (candidate.y || 0).toFixed(2), (candidate.z || 0).toFixed(2)].join(':'))
+            .join('|');
+    }
+
+    updateDynamicVRLights(force = false) {
+        if (!this.renderer?.xr?.isPresenting || !this.visualSettings?.realLights || !this.currentLightCandidates?.length) return;
+        if (!this.dolly) return;
+
+        const now = performance.now();
+        const anchor = new THREE.Vector3();
+        this.dolly.getWorldPosition(anchor);
+        const moved = this.lastVRLightAnchor.distanceToSquared(anchor);
+        const refreshDue = force || this.lastVRLightsRefresh <= 0 || (now - this.lastVRLightsRefresh) >= this.vrLightRefreshMs || moved >= (0.85 * 0.85);
+        if (!refreshDue) return;
+
+        const selected = this.selectLightCandidates(this.currentLightCandidates);
+        const signature = this.buildLightSelectionSignature(selected);
+        if (!force && signature === this.currentGeneratedLightSignature && moved < (1.6 * 1.6)) {
+            this.lastVRLightsRefresh = now;
+            this.lastVRLightAnchor.copy(anchor);
+            return;
+        }
+
+        this.currentGeneratedLightSignature = signature;
+        this.lastVRLightsRefresh = now;
+        this.lastVRLightAnchor.copy(anchor);
+        this.refreshGeneratedLights();
+    }
+
     selectLightCandidates(candidates) {
         const density = this.visualSettings.realLightDensity ?? 1.0;
-        const requested = Math.max(0, Math.floor((candidates?.length || 0) * density));
+        const requested = Math.max(0, Math.ceil((candidates?.length || 0) * density));
         const cap = this.visualSettings.realLightCap ?? requested;
         const target = Math.max(0, Math.min(cap, requested || 0, candidates?.length || 0));
         if (!candidates?.length || !target) return [];
         if (target >= candidates.length) return candidates.slice();
 
-        if (this.renderer?.xr?.isPresenting && this.camera) {
-            const camPos = new THREE.Vector3();
-            this.camera.getWorldPosition(camPos);
+        if (this.renderer?.xr?.isPresenting && this.dolly) {
+            const anchorPos = new THREE.Vector3();
+            this.dolly.getWorldPosition(anchorPos);
             return candidates
-                .map((candidate) => ({ candidate, d2: (candidate.x - camPos.x) ** 2 + (candidate.y - camPos.y) ** 2 + (candidate.z - camPos.z) ** 2 }))
+                .map((candidate) => ({ candidate, d2: (candidate.x - anchorPos.x) ** 2 + (candidate.z - anchorPos.z) ** 2 }))
                 .sort((a, b) => a.d2 - b.d2)
                 .slice(0, target)
                 .map((entry) => entry.candidate);
@@ -648,8 +690,12 @@ export class EssamEngine {
 
     refreshGeneratedLights() {
         this.clearGeneratedLights();
-        if (!this.visualSettings.realLights) return;
+        if (!this.visualSettings.realLights) {
+            this.currentGeneratedLightSignature = '';
+            return;
+        }
         const selected = this.selectLightCandidates(this.currentLightCandidates);
+        this.currentGeneratedLightSignature = this.buildLightSelectionSignature(selected);
         const intensityScale = this.visualSettings.realLightIntensityScale ?? 1.0;
         for (const candidate of selected) {
             const distance = Math.max(2.8, Math.min(candidate.range || 4.2, Math.max(4.6, (candidate.y || 3) * 1.45)));
@@ -818,6 +864,7 @@ export class EssamEngine {
 
         if (this.renderer.xr.isPresenting) {
             this.interactionManager.updateVR();
+            this.updateDynamicVRLights();
             this.renderer.render(this.scene, this.camera);
         } else {
             this.controls.update();
