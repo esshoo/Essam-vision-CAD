@@ -1,0 +1,24 @@
+V36 - 3D Slider Controls
+
+Changed:
+- Replaced 3D checkbox toggles with sliders for:
+  * Shadows (0% - 100%)
+  * Bloom (0% - 200%)
+  * Real Lights (0% - 150%)
+- Kept Sun Power as slider
+- Kept Quality preset dropdown as the base performance profile
+- Performance monitor now shows current slider percentages
+
+Behavior:
+- Shadows slider:
+  0% = off
+  higher values gradually raise shadow strength / catcher opacity and shadow map size within the current quality preset
+- Bloom slider:
+  0% = off
+  higher values raise bloom strength gradually
+- Real Lights slider:
+  0% = off
+  higher values raise generated light count / density / intensity gradually within the current quality preset
+
+Files changed:
+- addons/cad-toolkit/renderers/three/EssamEngine.js

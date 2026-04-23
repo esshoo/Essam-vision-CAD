@@ -1,0 +1,15 @@
+v37 - VR lights movement refresh fix
+
+What changed:
+- Real lights in VR now refresh automatically while the user moves.
+- Selection uses the dolly/player position instead of only the camera head position.
+- Refresh is throttled and movement-based to avoid lag.
+- VR runtime budget for real lights was relaxed slightly:
+  - more lights can stay active in VR
+  - density is higher than before
+  - still capped conservatively for performance
+
+Expected result:
+- Lights update while walking/teleporting inside VR
+- No need to exit VR or touch settings to refresh active lights
+- More than 1-2 lights can stay active when the file and slider level allow it

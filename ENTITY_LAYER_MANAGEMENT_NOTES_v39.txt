@@ -1,0 +1,5 @@
+v39 fixes:
+- Component-level selection and hide/delete for LineSegments-based source objects.
+- Much faster hide/delete by avoiding full layer rescan after each edit.
+- Component layer moves are preserved for export/3D through CADLayerKit.
+- Existing object-level fallback remains for non-LineSegments objects.

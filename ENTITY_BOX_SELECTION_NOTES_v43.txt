@@ -1,0 +1,13 @@
+v43 Entity Selection Improvements
+
+- Added right-click drag box selection in Entity Layer Editor.
+- Prevents viewer pan while right-drag selection is active.
+- Keeps left-click selection as before.
+- Shift/Ctrl can be used to add to current selection.
+- Selection hint text updated in the panel.
+
+Usage:
+- Enable entity selection mode.
+- Left click = select one element/component.
+- Right click + drag = select by area.
+- Shift + selection = add to current selection.

@@ -1,0 +1,18 @@
+v34 Annotation Layers
+=====================
+
+Added:
+- Multiple annotation/drawing layers instead of a single Pen layer.
+- Active drawing layer selector in the drawing toolbar.
+- New / rename / delete / show-hide / lock-unlock for drawing layers.
+- Move selected annotation to another layer from properties panel.
+- Create a new layer directly from selected-item properties and move the item into it.
+- Layer settings saved per source file.
+- Export/Open JSON now preserves annotation layer definitions and active layer.
+- LayerRulesPanel now lists all annotation layers, not only one Pen layer.
+
+Behavior:
+- New drawings/text/shapes go to the active annotation layer.
+- Hidden layers are not drawn on screen and are skipped from 3D/export paths.
+- Locked layers cannot receive new drawings or edits.
+- Deleting a drawing layer removes its annotations from all pages of the current file.

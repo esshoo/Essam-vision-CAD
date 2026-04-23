@@ -1,0 +1,5 @@
+v42
+- Fixed missing hasSourceLayer() bug that caused runtime errors in applyEditsToScene.
+- Restored component-level selection/hide/delete for LineSegments so hiding one door should not hide the whole layer.
+- Restricted selection to real source-layer objects only, ignoring background/paper/overlay/helper objects.
+- Moved edits storage key to v42 to avoid old broken selections leaking into the new behavior.

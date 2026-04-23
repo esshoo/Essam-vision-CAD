@@ -1,0 +1,30 @@
+Entity Layer Management v38
+==========================
+
+What is new:
+- New source-entity editor panel for the original CAD/PDF viewer scene.
+- You can now select individual visible source objects from the 2D plan instead of working only by full layer.
+- Selected source objects can be:
+  * moved to another existing layer
+  * moved to a new layer
+  * hidden
+  * deleted from the current project session
+- Multi-selection is supported with Shift+Click.
+- Source entity edits are stored in localStorage per file name and re-applied when the same file is reopened.
+- Layer rules panel automatically reflects source-layer changes after edits.
+
+Important scope note:
+- This version selects source scene objects, not CAD sub-segments inside a single merged object.
+- In many files this already feels like element-level editing.
+- If a source file merges many primitives into one scene object, deeper per-segment split/lasso can be added later.
+
+UI:
+- Floating menu now includes: "🧱 إدارة العناصر"
+- In the entity panel:
+  * activate selection mode
+  * click to select
+  * Shift+Click to add/remove more elements
+  * move selection to existing/new layer
+  * hide selection
+  * delete selection
+  * restore all hidden/deleted edits

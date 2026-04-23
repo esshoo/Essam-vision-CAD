@@ -13,6 +13,7 @@
   "./addons/cad-toolkit/renderers/three/SceneBuilder.js",
   "./addons/cad-toolkit/renderers/three/StorageManager.js",
   "./addons/cad-toolkit/ui/DrawingOverlay.js",
+  "./addons/cad-toolkit/ui/EntityLayerEditor.js",
   "./addons/cad-toolkit/ui/FloatingFabMenu.js",
   "./addons/cad-toolkit/ui/LayerRulesPanel.js",
   "./addons/cad-toolkit/viewer/CADViewer_app.js",

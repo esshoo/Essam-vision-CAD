@@ -55,6 +55,7 @@ function ensureFab() {
   // القائمة
   menu.appendChild(item("📂 فتح ملف", () => window.cadApp?.openFileUpload()));
   menu.appendChild(item("🧩 إعدادات الطبقات", () => window.layerRulesUI?.toggle?.()));
+  menu.appendChild(item("🧱 إدارة العناصر", () => window.cadEntityLayerEditor?.toggle?.()));
   menu.appendChild(item("✏️ الرسم بالقلم", () => window.cadDrawingOverlay?.toggle?.()));
   
   // --- التصحيح هنا ---

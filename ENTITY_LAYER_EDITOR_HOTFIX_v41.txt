@@ -1,0 +1,12 @@
+Hotfix v41
+
+Fixed:
+- ReferenceError in EntityLayerEditor.setMode caused by redeclaring `container`
+- Early layer extraction before scene readiness, which caused repeated `CADLayerKit: Scene not found!`
+- Reduced noisy layer refresh calls before viewer scene is available
+
+Notes about the remaining log messages:
+- `manifest.json 401` and `sw.js 401` are server/hosting issues, not a JavaScript bug in the app.
+- This usually happens when the local path is served through an authenticated or protected route.
+- Folder names with apostrophes/spaces can also make local preview setups more fragile.
+- Safest local path example: /Essam-vision-CAD/

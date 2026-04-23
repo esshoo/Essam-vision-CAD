@@ -12,8 +12,6 @@ export class SceneBuilder {
         this.preprocessor = new GeometryPreprocessor();
         this.snapPointKeys = new Set();
         this.lightCandidates = [];
-        this.roomZones = [];
-        this.roomZoneKeys = new Set();
     }
 
     build(data, layerConfig, globalSettings, forcedScale = 1.0) {
@@ -23,10 +21,6 @@ export class SceneBuilder {
         this.snapPoints = [];
         this.snapPointKeys = new Set();
         this.lightCandidates = [];
-        this.roomZones = [];
-        this.roomZoneKeys = new Set();
-        this.roomZones = [];
-        this.roomZoneKeys = new Set();
 
         const rawEntities = data.entities || [];
         const { entities, stats } = this.preprocessor.preprocessEntities(rawEntities);
@@ -69,10 +63,6 @@ export class SceneBuilder {
             const verts = entity.points || entity.vertices;
             if (!verts || verts.length < 2) return;
 
-            if (this.isRoomZoneEntity(config, entity, verts)) {
-                this.collectRoomZone(verts, ctx, entity);
-            }
-
             if (config.type === 'lights' || config.isLight) {
                 this.processLightEntity(verts, ctx, entity);
                 return;
@@ -99,7 +89,6 @@ export class SceneBuilder {
             lineBatchCount: lineBatches.size,
             snapPoints: this.snapPoints.length,
             lightCandidates: this.lightCandidates.length,
-            roomZones: this.roomZones.length,
         };
         this.roomGroup.userData.bounds = bounds;
 
@@ -114,7 +103,6 @@ export class SceneBuilder {
             buildStats: this.roomGroup.userData.buildStats,
             bounds,
             lightCandidates: [...this.lightCandidates],
-            roomZones: [...this.roomZones],
         };
     }
 
@@ -160,169 +148,6 @@ export class SceneBuilder {
     }
 
 
-    isRoomZoneEntity(config = {}, entity = {}, verts = []) {
-        if (!(entity.closed || entity.shape) || verts.length < 3) return false;
-        const type = config.type;
-        return type === 'floor' || type === 'ceiling' || type === 'wall' || type === 'walls';
-    }
-
-    collectRoomZone(verts, ctx, entity = {}) {
-        const points = [];
-        for (const p of verts) {
-            const x = (p.x * ctx.scale) - ctx.cx;
-            const z = -((p.y * ctx.scale) - ctx.cy);
-            points.push({ x, z });
-        }
-        const filtered = this.removeDuplicateZonePoints(points);
-        if (filtered.length < 3) return;
-
-        const area = this.computePolygonAreaXZ(filtered);
-        const areaAbs = Math.abs(area);
-        if (areaAbs < 0.5) return;
-
-        const bounds = this.computeZoneBounds(filtered);
-        const centroid = this.computePolygonCentroidXZ(filtered, area);
-        const width = Math.max(0.1, bounds.maxX - bounds.minX);
-        const depth = Math.max(0.1, bounds.maxZ - bounds.minZ);
-        const height = Math.max(2.1, ctx.config.height || ctx.height || 3.0);
-        const entityType = ctx.config.type;
-        let floorY = 0;
-        let ceilingY = height;
-        if (entityType === 'ceiling') {
-            ceilingY = Math.max(0.2, ctx.config.ceilingElevation ?? ctx.config.elevation ?? height);
-            floorY = Math.max(0, ceilingY - height);
-        } else {
-            floorY = Math.max(0, ctx.config.floorElevation ?? ctx.config.baseElevation ?? ctx.config.elevation ?? 0);
-            ceilingY = Math.max(floorY + 0.2, ctx.config.ceilingElevation ?? (floorY + height));
-        }
-        const radius = Math.max(1.2, Math.hypot(width, depth) * 0.42);
-        const recommendedLightRange = Math.max(2.2, Math.min(ctx.config.range ?? radius * 1.12, radius * 1.18 + (ceilingY - floorY) * 0.35));
-        const vertical = Math.max(1.8, ceilingY - floorY);
-        const horizontalRadius = Math.max(0.7, Math.min(width, depth) * 0.38);
-        const recommendedSpotAngle = Math.max(Math.PI / 10, Math.min(Math.PI / 3.8, Math.atan2(horizontalRadius, vertical) * 2.15));
-
-        const key = `${centroid.x.toFixed(2)}|${centroid.z.toFixed(2)}|${width.toFixed(2)}|${depth.toFixed(2)}|${floorY.toFixed(2)}|${ceilingY.toFixed(2)}`;
-        if (this.roomZoneKeys.has(key)) return;
-        this.roomZoneKeys.add(key);
-
-        this.roomZones.push({
-            id: `zone-${this.roomZones.length + 1}`,
-            type: ctx.config.type || 'room',
-            layer: ctx.config.layerName || entity.layer || 'room',
-            points: filtered,
-            bounds,
-            centroid,
-            area: areaAbs,
-            width,
-            depth,
-            floorY,
-            ceilingY,
-            height: ceilingY - floorY,
-            radius,
-            recommendedLightRange,
-            recommendedSpotAngle,
-            searchRadiusSq: Math.pow(Math.max(width, depth, radius) * 1.35, 2),
-        });
-    }
-
-    removeDuplicateZonePoints(points) {
-        const out = [];
-        let prev = null;
-        for (const p of points) {
-            if (!prev || ((prev.x - p.x) ** 2 + (prev.z - p.z) ** 2) > 1e-8) {
-                out.push(p);
-                prev = p;
-            }
-        }
-        if (out.length > 2) {
-            const a = out[0];
-            const b = out[out.length - 1];
-            if (((a.x - b.x) ** 2 + (a.z - b.z) ** 2) < 1e-8) out.pop();
-        }
-        return out;
-    }
-
-    computePolygonAreaXZ(points) {
-        let area = 0;
-        for (let i = 0; i < points.length; i++) {
-            const a = points[i];
-            const b = points[(i + 1) % points.length];
-            area += (a.x * b.z) - (b.x * a.z);
-        }
-        return area * 0.5;
-    }
-
-    computePolygonCentroidXZ(points, signedArea = 0) {
-        let areaFactor = signedArea;
-        if (!areaFactor) areaFactor = this.computePolygonAreaXZ(points);
-        if (Math.abs(areaFactor) < 1e-8) {
-            let sx = 0, sz = 0;
-            for (const p of points) { sx += p.x; sz += p.z; }
-            return { x: sx / points.length, z: sz / points.length };
-        }
-        let cx = 0, cz = 0;
-        for (let i = 0; i < points.length; i++) {
-            const a = points[i];
-            const b = points[(i + 1) % points.length];
-            const cross = (a.x * b.z) - (b.x * a.z);
-            cx += (a.x + b.x) * cross;
-            cz += (a.z + b.z) * cross;
-        }
-        const div = 1 / (6 * areaFactor);
-        return { x: cx * div, z: cz * div };
-    }
-
-    computeZoneBounds(points) {
-        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-        for (const p of points) {
-            if (p.x < minX) minX = p.x;
-            if (p.x > maxX) maxX = p.x;
-            if (p.z < minZ) minZ = p.z;
-            if (p.z > maxZ) maxZ = p.z;
-        }
-        return { minX, maxX, minZ, maxZ };
-    }
-
-    isPointInsideZone(x, z, zone) {
-        if (!zone) return false;
-        if (x < zone.bounds.minX || x > zone.bounds.maxX || z < zone.bounds.minZ || z > zone.bounds.maxZ) return false;
-        let inside = false;
-        const pts = zone.points;
-        for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-            const xi = pts[i].x, zi = pts[i].z;
-            const xj = pts[j].x, zj = pts[j].z;
-            const intersect = ((zi > z) !== (zj > z)) && (x < ((xj - xi) * (z - zi)) / ((zj - zi) || 1e-8) + xi);
-            if (intersect) inside = !inside;
-        }
-        return inside;
-    }
-
-    findBestRoomZone(x, z) {
-        if (!this.roomZones.length) return null;
-        let bestInside = null;
-        let bestInsideArea = Infinity;
-        let bestNear = null;
-        let bestNearDist = Infinity;
-        for (const zone of this.roomZones) {
-            if (this.isPointInsideZone(x, z, zone)) {
-                if (zone.area < bestInsideArea) {
-                    bestInsideArea = zone.area;
-                    bestInside = zone;
-                }
-                continue;
-            }
-            const dx = x - zone.centroid.x;
-            const dz = z - zone.centroid.z;
-            const distSq = (dx * dx) + (dz * dz);
-            if (distSq <= zone.searchRadiusSq && distSq < bestNearDist) {
-                bestNearDist = distSq;
-                bestNear = zone;
-            }
-        }
-        return bestInside || bestNear || null;
-    }
-
-
     processLightEntity(verts, ctx, entity = {}) {
         const closed = !!(entity.closed || entity.shape);
         for (let i = 0; i < verts.length - 1; i++) {
@@ -349,30 +174,20 @@ export class SceneBuilder {
 
             const dirX = dx / dist;
             const dirZ = dz / dist;
+            const elevation = (ctx.config.elevation ?? ctx.height) - drop;
             const intensity = ctx.config.intensity ?? 2.0;
+            const roomHeight = ctx.height || 3.0;
+            const range = ctx.config.range ?? Math.max(3.2, Math.min(roomHeight * 1.35, 5.4));
             const color = ctx.config.color || '#ffffdd';
+            const targetY = Math.max(0.1, elevation - Math.max(1.8, roomHeight * 0.85));
 
             let cursor = carry;
             while (cursor <= dist) {
-                const px = x1 + dirX * cursor;
-                const pz = z1 + dirZ * cursor;
-                const zone = this.findBestRoomZone(px, pz);
-                const roomHeight = zone ? Math.max(2.1, zone.height || (zone.ceilingY - zone.floorY)) : (ctx.height || 3.0);
-                const zoneFloorY = zone ? zone.floorY : 0;
-                const zoneCeilingY = zone ? zone.ceilingY : (zoneFloorY + roomHeight);
-                const elevationBase = zone ? Math.min(ctx.config.elevation ?? zoneCeilingY, zoneCeilingY) : (ctx.config.elevation ?? ctx.height);
-                const elevation = Math.max(zoneFloorY + 0.25, elevationBase - drop);
-                const range = zone
-                    ? Math.max(2.2, Math.min(ctx.config.range ?? zone.recommendedLightRange, zone.recommendedLightRange))
-                    : (ctx.config.range ?? Math.max(3.2, Math.min(roomHeight * 1.35, 5.4)));
-                const targetY = zone ? Math.max(zoneFloorY + 0.04, Math.min(zoneFloorY + 0.12, elevation - 0.45)) : Math.max(0.1, elevation - Math.max(1.8, roomHeight * 0.85));
-                const spotAngle = zone ? zone.recommendedSpotAngle : undefined;
-
                 this.lightCandidates.push({
                     type: 'point',
-                    x: px,
+                    x: x1 + dirX * cursor,
                     y: elevation,
-                    z: pz,
+                    z: z1 + dirZ * cursor,
                     intensity,
                     range,
                     color,
@@ -381,11 +196,6 @@ export class SceneBuilder {
                     dirZ,
                     layer: ctx.config.layerName || entity.layer || 'lights',
                     source: 'strip',
-                    roomZone: zone || null,
-                    roomZoneId: zone?.id || null,
-                    roomAware: !!zone,
-                    spotAngle,
-                    spotPenumbra: zone ? 0.38 : 0.65,
                 });
                 added++;
                 cursor += spacingBase;
@@ -398,29 +208,17 @@ export class SceneBuilder {
 
         if (!added && verts[0]) {
             const p = verts[0];
-            const fx = (p.x * ctx.scale) - ctx.cx;
-            const fz = -((p.y * ctx.scale) - ctx.cy);
-            const zone = this.findBestRoomZone(fx, fz);
-            const roomHeight = zone ? Math.max(2.1, zone.height || (zone.ceilingY - zone.floorY)) : (ctx.height || 3.0);
-            const zoneFloorY = zone ? zone.floorY : 0;
-            const zoneCeilingY = zone ? zone.ceilingY : (zoneFloorY + roomHeight);
-            const fy = Math.max(zoneFloorY + 0.25, (Math.min(ctx.config.elevation ?? zoneCeilingY, zoneCeilingY)) - drop);
             this.lightCandidates.push({
                 type: 'point',
-                x: fx,
-                y: fy,
-                z: fz,
+                x: (p.x * ctx.scale) - ctx.cx,
+                y: (ctx.config.elevation ?? ctx.height) - drop,
+                z: -((p.y * ctx.scale) - ctx.cy),
                 intensity: ctx.config.intensity ?? 2.0,
-                range: zone ? Math.max(2.1, Math.min(ctx.config.range ?? zone.recommendedLightRange, zone.recommendedLightRange)) : (ctx.config.range ?? Math.max(3.0, Math.min((ctx.height || 3.0) * 1.3, 5.0))),
+                range: ctx.config.range ?? Math.max(3.0, Math.min((ctx.height || 3.0) * 1.3, 5.0)),
                 color: ctx.config.color || '#ffffdd',
-                targetY: zone ? Math.max(zoneFloorY + 0.04, Math.min(zoneFloorY + 0.12, fy - 0.45)) : 0.1,
+                targetY: 0.1,
                 layer: ctx.config.layerName || entity.layer || 'lights',
                 source: 'pointFallback',
-                roomZone: zone || null,
-                roomZoneId: zone?.id || null,
-                roomAware: !!zone,
-                spotAngle: zone ? zone.recommendedSpotAngle : undefined,
-                spotPenumbra: zone ? 0.34 : 0.55,
             });
             added++;
         }
