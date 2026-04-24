@@ -4,6 +4,7 @@
  * - Handles File Picking and Overlay management only.
  */
 import { EssamEngine } from './EssamEngine.js';
+import { t } from '../../core/i18n.js';
 
 export const CAD3DBridge = {
   overlay: null,
@@ -27,9 +28,9 @@ export const CAD3DBridge = {
       padding: "0 20px", borderBottom: "1px solid #444", justifyContent: "space-between", flexShrink: "0"
     });
     const title = document.createElement("span");
-    title.textContent = "3D Viewer (Essam Engine)"; title.style.color = "#fff"; title.style.fontWeight = "bold";
+    title.textContent = t("viewer.title3d", "3D Viewer"); title.style.color = "#fff"; title.style.fontWeight = "bold";
     const closeBtn = document.createElement("button");
-    closeBtn.textContent = "✕ Close";
+    closeBtn.textContent = `✕ ${t("viewer.close3d", "Close")}`;
     closeBtn.style.cssText = "background:#d9534f;color:#fff;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;";
     closeBtn.onclick = () => this.close();
     
@@ -74,7 +75,7 @@ export const CAD3DBridge = {
               this.engine.buildSceneFromConfig(json, json.rulesByLayer, json.settings || {});
           } catch (e) {
               console.error('[CAD3DBridge] Failed to open 3D view:', e);
-              alert('تعذر فتح العرض ثلاثي الأبعاد. افتح الكونسول لمعرفة الخطأ.');
+              alert(t('viewer.open3dError', 'Unable to open the 3D view. Check the console for details.'));
               throw e;
           }
       }
@@ -97,7 +98,7 @@ window.cad3dOpen = (jsonData) => {
                 const text = await input.files[0].text();
                 CAD3DBridge.loadJSON(JSON.parse(text)); 
             } 
-            catch(e) { console.error("Invalid JSON", e); alert("Invalid JSON File"); }
+            catch(e) { console.error("Invalid JSON", e); alert(t("viewer.invalidJson", "Invalid JSON file")); }
         }
     };
     input.click();

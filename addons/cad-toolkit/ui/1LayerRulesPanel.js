@@ -49,7 +49,7 @@ function ensurePanel() {
     position: "fixed", left: "20px", top: "20px", width: "420px", height: "85vh",
     zIndex: 4200, background: "rgba(0,0,0,0.62)", border: "1px solid rgba(255,255,255,0.14)",
     borderRadius: "16px", boxShadow: "0 14px 36px rgba(0,0,0,0.38)", backdropFilter: "blur(12px)",
-    display: "none", flexDirection: "column", fontFamily: "sans-serif", overflow: "hidden", color: "#fff",
+    display: "flex", flexDirection: "column", fontFamily: "sans-serif", overflow: "hidden", color: "#fff",
     resize: "both", minWidth: "360px", minHeight: "360px"
   }});
 
@@ -161,6 +161,7 @@ function makeDraggable(target, handle) {
 function loadRules() { state.rules = LayerRulesStore.load(PROJECT_ID); }
 function saveRules() { LayerRulesStore.save(PROJECT_ID, state.rules); }
 
+// ... (Rest of detectType, ensureDefaults, getDefaultsForType same as V12) ...
 function detectType(name) {
     const n = name.toLowerCase();
     if (n.includes("wall") || n.includes("mur")) return "walls";
@@ -375,26 +376,7 @@ function toggleCollapse() { collapsed = !collapsed; content.style.display = coll
 function show() { ensurePanel(); panel.style.display = "flex"; if (!state.layers.length) refreshFromViewer(); }
 function hide() { ensurePanel(); panel.style.display = "none"; }
 function isVisible() { ensurePanel(); return panel && panel.style.display !== "none"; }
-
-// التعديل الرئيسي لمنع الدبل كليك
-let lastToggleTime = 0;
-function toggle() { 
-    const now = Date.now();
-    if (now - lastToggleTime < 250) return;
-    lastToggleTime = now;
-    if (!isVisible()) show(); else hide(); 
-}
+function toggle() { if (!isVisible()) show(); else hide(); }
 
 ensurePanel();
-window.addEventListener("cad:language-changed", () => { 
-    try { 
-        if (panel) {
-            const titleEl = panel.querySelector("#layer-rules-title");
-            if (titleEl) titleEl.textContent = panelTranslations.title();
-            
-            const subtitleEl = panel.querySelector("#layer-rules-subtitle");
-            if (subtitleEl) subtitleEl.textContent = panelTranslations.subtitle();
-        }
-        renderList(); 
-    } catch (_) {} 
-});
+window.addEventListener("cad:language-changed", () => { try { panel?.querySelector("#layer-rules-title").textContent = panelTranslations.title(); panel?.querySelector("#layer-rules-subtitle").textContent = panelTranslations.subtitle(); renderList(); } catch (_) {} });

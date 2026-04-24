@@ -1,0 +1,118 @@
+{
+  "app": {
+    "title": "Essam Vision CAD"
+  },
+  "toolbar": {
+    "openFile": "Open",
+    "layerRules": "Layer Rules",
+    "entityManager": "Entities",
+    "drawing": "Drawing",
+    "view3d": "3D View",
+    "language": "Language",
+    "english": "English",
+    "arabic": "Arabic",
+    "workspace": "Workspace",
+    "openActions": "Open",
+    "refreshPage": "Refresh Page",
+    "openJson2d": "Open 2D JSON",
+    "openJson3d": "Open 3D JSON"
+  },
+  "builtin": {
+    "home": "Home",
+    "fullscreen": "Full Screen",
+    "zoom": "Zoom",
+    "zoomExtent": "Zoom to Extent",
+    "screenshot": "Screenshot",
+    "measure": "Measure",
+    "markup": "Markup",
+    "markupVisibility": "Markup Visibility",
+    "layers": "Layers",
+    "settings": "Settings"
+  },
+  "viewer": {
+    "ready": "Ready. Use the toolbar normally.",
+    "fileUploaded": "File uploaded.",
+    "fileLoadError": "Failed to open file.",
+    "fileLoadErrorNamed": "Failed to open file: {name}",
+    "pdfPage": "Page",
+    "invalidJson": "Invalid JSON file",
+    "open3dError": "Unable to open the 3D view. Check the console for details.",
+    "close3d": "Close",
+    "title3d": "3D Viewer"
+  },
+  "study": {
+    "title": "Library and Project Study",
+    "baseline": "Stable baseline",
+    "libraries": "Library capabilities",
+    "project": "Current project capabilities",
+    "gaps": "Missing pieces",
+    "target": "Proposed target architecture"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Language, quick refresh, and JSON open tools",
+    "language": "Language",
+    "quickActions": "Quick actions",
+    "savedViews": "Saved views",
+    "refreshPage": "Refresh Page",
+    "openJson2d": "Open 2D JSON",
+    "openJson3d": "Open 3D JSON",
+    "openFile": "Open File",
+    "note": "2D JSON opens annotations and their layers, and 3D JSON opens the saved 3D scene."
+  },
+  "layers": {
+    "title": "Project Layers",
+    "subtitle": "Layer control and 3D conversion",
+    "scale": "Scale",
+    "sunInside3d": "Sun is inside 3D view",
+    "scan": "Scan",
+    "save": "Save",
+    "exportJson": "Export JSON",
+    "preview3d": "Preview 3D",
+    "search": "Search layers",
+    "footer": "Control layer visibility and 3D conversion",
+    "color": "Color",
+    "height": "Height",
+    "thickness": "Thickness",
+    "elevation": "Elevation",
+    "width": "Width",
+    "intensity": "Intensity",
+    "range": "Range",
+    "spacing": "Spacing",
+    "depth": "Depth",
+    "sill": "Sill",
+    "level": "Level",
+    "autoCeil": "Auto Ceiling"
+  },
+  "layerTypes": {
+    "lines": "Lines",
+    "walls": "Walls",
+    "floor": "Floor",
+    "ceiling": "Ceiling",
+    "beams": "Beam",
+    "lights": "Light",
+    "glass": "Glass",
+    "door": "Door/Window",
+    "hide": "Hide"
+  },
+  "three": {
+    "sunPower": "Sun Power",
+    "quality": "Quality",
+    "shadows": "Shadows",
+    "bloom": "Bloom",
+    "realLights": "Real Lights",
+    "monitor": "Monitor"
+  },
+  "quality": {
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High"
+  },
+  "measure": {
+    "distance": "Distance Measurement",
+    "area": "Area Measurement",
+    "angle": "Angle Measurement",
+    "coordinate": "Coordinate Measurement",
+    "clear": "Clear Measurement"
+  }
+}

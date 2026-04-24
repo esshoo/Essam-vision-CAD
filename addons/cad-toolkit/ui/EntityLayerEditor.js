@@ -71,6 +71,37 @@ class CADEntityLayerEditor {
   getStorageKey(name = null) { return `essam-source-entity-edits-v42::${name || this.getCurrentFileName()}`; }
 
 
+
+  makeDraggable(target, handle) {
+    let dragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0, activePointerId = null;
+    const stopEvent = (e) => { e.preventDefault(); e.stopPropagation(); };
+    handle.style.cursor = 'move';
+    handle.style.touchAction = 'none';
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button,input,select,textarea')) return;
+      dragging = true;
+      activePointerId = e.pointerId;
+      handle.setPointerCapture?.(e.pointerId);
+      const rect = target.getBoundingClientRect();
+      startLeft = rect.left; startTop = rect.top; startX = e.clientX; startY = e.clientY;
+      stopEvent(e);
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (!dragging || e.pointerId !== activePointerId) return;
+      target.style.left = `${startLeft + e.clientX - startX}px`;
+      target.style.top = `${startTop + e.clientY - startY}px`;
+      target.style.right = 'auto';
+      stopEvent(e);
+    });
+    const finish = (e) => {
+      if (!dragging || (activePointerId !== null && e.pointerId !== activePointerId)) return;
+      dragging = false; activePointerId = null;
+      try { handle.releasePointerCapture?.(e.pointerId); } catch (_) {}
+      stopEvent(e);
+    };
+    handle.addEventListener('pointerup', finish);
+    handle.addEventListener('pointercancel', finish);
+  }
   ensureSelectionBox() {
     if (this.selectionBoxEl && document.body.contains(this.selectionBoxEl)) return this.selectionBoxEl;
     this.selectionBoxEl = el("div", {
@@ -232,7 +263,8 @@ class CADEntityLayerEditor {
         position: "fixed", right: "18px", top: "18px", width: "360px", maxWidth: "calc(100vw - 36px)",
         maxHeight: "80vh", overflow: "auto", zIndex: 7002, display: "none", padding: "14px",
         borderRadius: "16px", border: "1px solid rgba(255,255,255,0.14)",
-        background: "rgba(0,0,0,0.62)", backdropFilter: "blur(10px)", boxShadow: "0 12px 28px rgba(0,0,0,0.35)"
+        background: "rgba(0,0,0,0.62)", backdropFilter: "blur(10px)", boxShadow: "0 12px 28px rgba(0,0,0,0.35)",
+        resize: "both", minWidth: "320px", minHeight: "220px"
       }
     }, [
       header,
@@ -255,6 +287,7 @@ class CADEntityLayerEditor {
     ]);
 
     document.body.appendChild(this.panel);
+    this.makeDraggable(this.panel, header);
     this.refreshLayerOptions();
     this.updateRestoreInfo();
   }

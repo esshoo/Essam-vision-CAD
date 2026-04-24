@@ -44,5 +44,11 @@
   "./robots.txt",
   "./settings/SettingsPanel.css",
   "./settings/Viewer2dSettingsPanel.js",
-  "./sitemap.xml"
+  "./sitemap.xml",
+  "./addons/cad-toolkit/core/i18n.js",
+  "./addons/cad-toolkit/ui/NativeToolbarBridge.js",
+  "./locales/en.json",
+  "./locales/ar.json",
+  "./docs/LIBRARY_AND_PROJECT_STUDY_v44.txt",
+  "./addons/cad-toolkit/ui/SettingsPanel.js"
 ]

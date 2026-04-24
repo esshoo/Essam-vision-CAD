@@ -1,5 +1,6 @@
 // EssamEngine.js
 import { THREE, THREEAddons } from '@x-viewer/core';
+import { t } from '../../core/i18n.js';
 const { OrbitControls, VRButton, EffectComposer, RenderPass, UnrealBloomPass, OutputPass } = THREEAddons;
 
 import { SceneBuilder } from './SceneBuilder.js';
@@ -168,38 +169,38 @@ export class EssamEngine {
         div.innerHTML = `
             <div style="display:flex; flex-direction:column; gap:8px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-                    <label style="font-weight:bold;">☀ Sun Power</label>
+                    <label style="font-weight:bold;">☀ ${t('three.sunPower', 'قوة الشمس')}</label>
                     <span data-role="sun-value" style="color:#9ec8ff; font-weight:bold;">1.0x</span>
                 </div>
                 <input data-role="sun" type="range" min="0" max="2" step="0.05" value="1.0" style="cursor:pointer; width:100%;">
 
-                <label style="font-weight:bold; margin-top:4px;">🎛 Quality</label>
+                <label style="font-weight:bold; margin-top:4px;">🎛 ${t('three.quality', 'الجودة')}</label>
                 <select data-role="quality" style="width:100%; padding:4px; background:#111; color:#fff; border:1px solid #444; border-radius:4px;">
-                    <option value="low">Low</option>
-                    <option value="medium" selected>Medium</option>
-                    <option value="high">High</option>
+                    <option value="low">${t('quality.low','منخفض')}</option>
+                    <option value="medium" selected>${t('quality.medium','متوسط')}</option>
+                    <option value="high">${t('quality.high','عال')}</option>
                     <option value="vr">VR</option>
                 </select>
 
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:4px;">
-                    <label style="font-weight:bold;">🌑 Shadows</label>
+                    <label style="font-weight:bold;">🌑 ${t('three.shadows', 'الظلال')}</label>
                     <span data-role="shadows-value" style="color:#9ec8ff; font-weight:bold;">100%</span>
                 </div>
                 <input data-role="shadows" type="range" min="0" max="100" step="1" value="100" style="cursor:pointer; width:100%;">
 
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:4px;">
-                    <label style="font-weight:bold;">✨ Bloom</label>
+                    <label style="font-weight:bold;">✨ ${t('three.bloom', 'الوهج')}</label>
                     <span data-role="bloom-value" style="color:#9ec8ff; font-weight:bold;">100%</span>
                 </div>
                 <input data-role="bloom" type="range" min="0" max="200" step="1" value="100" style="cursor:pointer; width:100%;">
 
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:4px;">
-                    <label style="font-weight:bold;">💡 Real Lights</label>
+                    <label style="font-weight:bold;">💡 ${t('three.realLights', 'الإضاءة الفعلية')}</label>
                     <span data-role="real-lights-value" style="color:#9ec8ff; font-weight:bold;">100%</span>
                 </div>
                 <input data-role="real-lights" type="range" min="0" max="150" step="1" value="100" style="cursor:pointer; width:100%;">
 
-                <button data-role="perf-toggle" type="button" style="margin-top:6px; width:100%; padding:6px 8px; background:#1f2f46; color:#fff; border:1px solid #3f5b82; border-radius:4px; cursor:pointer;">📊 Monitor</button>
+                <button data-role="perf-toggle" type="button" style="margin-top:6px; width:100%; padding:6px 8px; background:#1f2f46; color:#fff; border:1px solid #3f5b82; border-radius:4px; cursor:pointer;">📊 ${t('three.monitor', 'المراقبة')}</button>
             </div>
         `;
 

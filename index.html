@@ -40,26 +40,30 @@
   <div id="myCanvas"></div>
 
   <script type="module">
+    import { initI18n, getCurrentLanguage, t } from "./addons/cad-toolkit/core/i18n.js";
     import { CADViewerApp } from "./addons/cad-toolkit/viewer/CADViewer_app.js";
+
+    await initI18n();
 
     const app = new CADViewerApp("myCanvas", {
       // IMPORTANT: keep x-viewer toolbar + bottom bar ON
       minimalUI: false,
       // IMPORTANT: do NOT show x-viewer built-in layers window (we replace it with our panel)
       replaceToolbarLayers: true,
+      language: getCurrentLanguage(),
     });
 
     await app.init();
     window.cadApp = app;
 
-    console.log("Ready. Use toolbar normally. Layers button opens our panel.");
+    console.log(t("viewer.ready", "Ready. Use the toolbar normally."));
   </script>
 
-  <!-- Floating translucent menu (Open / Layers / 3D) -->
-  <script type="module" src="./addons/cad-toolkit/ui/FloatingFabMenu.js"></script>
+  <script type="module" src="./addons/cad-toolkit/ui/SettingsPanel.js"></script>
 
   <!-- Draggable/resizable Rules panel (hidden until opened) -->
   <script type="module" src="./addons/cad-toolkit/ui/LayerRulesPanel.js"></script>
+  <script type="module" src="./addons/cad-toolkit/ui/NativeToolbarBridge.js"></script>
   <!-- Pen / annotations overlay -->
   <script type="module" src="./addons/cad-toolkit/ui/DrawingOverlay.js"></script>
   <!-- Source entities / layer editor -->

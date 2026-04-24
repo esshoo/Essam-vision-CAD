@@ -349,6 +349,20 @@ class CADDrawingOverlay {
     this.redraw();
   }
 
+  setLayerVisibility(name, visible, save = true) {
+    const meta = this.getLayerMeta(name);
+    if (!meta) return;
+    meta.visible = visible !== false;
+    if (meta.visible === false && this.getSelectedItem() && (this.getSelectedItem().layerName || this.defaultAnnotationLayerName) === meta.name) {
+      this.selectedIndex = -1;
+      this.dragSelection = null;
+      this.syncPropertiesFromSelected();
+    }
+    this.refreshLayerControls();
+    if (save) this.saveLayerSettings();
+    this.redraw();
+  }
+
   toggleActiveLayerLock() {
     const active = this.getLayerMeta(this.annotationLayerName);
     if (!active) return;

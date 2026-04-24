@@ -1,4 +1,5 @@
 import { THREE, Viewer2d } from "@x-viewer/core";
+import { t, getCurrentLanguage } from "../core/i18n.js";
 import {
   LocalDxfUploader,
   PdfLoaderPlugin,
@@ -20,6 +21,8 @@ export class CADViewerApp {
     this.options = options || {};
 
     this.viewer = null;
+    this.toolbarPlugin = null;
+    this.language = options.language || getCurrentLanguage();
     this.uploader = null;
     this.layerManager = null;
 
@@ -71,9 +74,9 @@ export class CADViewerApp {
 
     this._initPluginsFull();
     this._initUploader();
-    this._initQualityToggle(); // ✅ إضافة زر التحكم
 
-    console.log("System Ready.");
+    console.log(t("viewer.ready", "Ready. Use the toolbar normally."));
+    window.dispatchEvent(new CustomEvent("cad:app-ready"));
   }
 
   _initPluginsFull() {
@@ -87,17 +90,27 @@ export class CADViewerApp {
 
     const menuConfig = {
       [ToolbarMenuId.Layers]: {
-        onActive: () => {
-          if (!this.layerManager) this.layerManager = new LayerManagerPlugin(this.viewer);
-          this.layerManager.setVisible(true);
+        onClick: (viewer, toolbar) => {
+          try {
+            window.layerRulesUI?.ensureReady?.();
+            window.layerRulesUI?.toggle?.();
+          } catch (err) {
+            console.error('[LayersButton] Toggle failed:', err);
+          }
         },
-        onDeactive: () => {
-          if (this.layerManager) this.layerManager.setVisible(false);
+      },
+      [ToolbarMenuId.Markup]: {
+        onClick: (_viewer, toolbar) => {
+          try { toolbar?.setActive?.(ToolbarMenuId.MarkupVisibility, false); } catch (_) {}
+          window.cadDrawingOverlay?.toggle?.();
         },
+      },
+      [ToolbarMenuId.MarkupVisibility]: {
+        visible: false,
       },
     };
 
-    new Viewer2dToolbarPlugin(this.viewer, { menuConfig, language: "en" });
+    this.toolbarPlugin = new Viewer2dToolbarPlugin(this.viewer, { menuConfig, language: "en" });
   }
 
   _initUploader() {
@@ -105,14 +118,16 @@ export class CADViewerApp {
     this.uploader.setPdfWorker("./libs/pdf/pdf.worker.min.js");
 
     this.uploader.onSuccess = (event = {}) => {
-      console.log("File Uploaded.", event.fileName || "");
+      console.log(t("viewer.fileUploaded", "File uploaded."), event.fileName || "");
       if (event.file) this.uploader.file = event.file;
       window.dispatchEvent(new CustomEvent("cad:file-loaded", { detail: event }));
     };
 
     this.uploader.onError = (event = {}) => {
       console.error("File load error:", event);
-      const msg = event?.fileName ? `فشل فتح الملف: ${event.fileName}` : "فشل فتح الملف.";
+      const msg = event?.fileName
+        ? t("viewer.fileLoadErrorNamed", "Failed to open file: {name}").replace("{name}", event.fileName)
+        : t("viewer.fileLoadError", "Failed to open file.");
       alert(msg);
     };
 
@@ -273,7 +288,7 @@ export class CADViewerApp {
         userSelect: "none",
       });
 
-      const label = document.createElement("span"); label.textContent = "Page:"; wrap.appendChild(label);
+      const label = document.createElement("span"); label.textContent = `${t("viewer.pdfPage", "Page")}:`; wrap.appendChild(label);
 
       const btnPrev = document.createElement("button");
       btnPrev.textContent = "◀";

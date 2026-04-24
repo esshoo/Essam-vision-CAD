@@ -1,0 +1,64 @@
+Essam Vision CAD – Library and Project Study (v44)
+=================================================
+
+1) Stable baseline
+------------------
+The stable baseline preserved before any architectural changes is v43.
+All new work in v44 is limited to toolbar integration and language scaffolding.
+The source files from v43 remain the rollback point.
+
+2) What the x-viewer libraries already provide
+----------------------------------------------
+The installed x-viewer stack already provides:
+- 2D viewer and local file upload
+- PDF loading through PdfLoaderPlugin
+- Bottom toolbar with the same visual style shown in the reference screenshot
+- Screenshot button
+- Measure button and measurement tools
+- Markup button and markup visibility
+- Layers button
+- Settings panel
+- Toolbar API with addMenu(), updateMenu(), refresh(), customElement(), dropdown menus
+
+Important result:
+We do not need to replace the native toolbar.
+We can extend it cleanly with our own tools and keep the same visual language.
+
+3) What the current project already adds on top
+-----------------------------------------------
+Current project capabilities beyond the library:
+- Layer rules panel for 2D-to-3D classification
+- 3D preview and export bridge
+- Drawing overlay with pen, text, shapes, JSON save/open, PDF export
+- Annotation layers
+- Performance monitor
+- Room-aware lights and VR room lights
+- Source entity editor and box selection experiments
+- Offline PDF export through local pdf-lib
+
+4) Current gaps
+---------------
+The main gap is not rendering anymore. It is data control.
+The weak area is precise source entity selection and full source-layer editing.
+The current selection still depends too much on rendered geometry instead of a true source-entity model.
+
+5) Recommended target architecture
+----------------------------------
+Recommended next architecture after UI stabilization:
+- Parser output normalization layer
+- Entity registry with stable IDs per source element
+- Selection engine based on source entities, not rendered batches
+- Layer manager for source entities
+- 2D renderer as a view over entity data
+- 3D builder as a second view over the same entity data
+- VR as a third view over the same entity data
+
+6) v44 scope only
+-----------------
+This v44 iteration intentionally does only:
+- Native toolbar integration for custom tools
+- Language folder scaffolding with English and Arabic JSON files
+- i18n core for future translation work
+- Built-in toolbar relabeling support for visible labels
+
+This keeps the codebase close to v43 while preparing the project for the next larger architectural phase.
