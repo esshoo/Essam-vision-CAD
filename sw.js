@@ -1,4 +1,4 @@
-const CACHE_NAME = 'essam-cad-pwa-v44';
+const CACHE_NAME = 'essam-cad-pwa-v50';
 const CORE_URLS = [
   './',
   './index.html',

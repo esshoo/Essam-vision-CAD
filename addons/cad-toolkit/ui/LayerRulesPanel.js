@@ -5,7 +5,9 @@
  */
 import { CADLayerKit, LayerRulesStore } from "../CADLayerKit.js";
 import { CADSceneExporter } from "../CADSceneExporter.js";
-import { t, getCurrentLanguage } from "../core/i18n.js";
+import { t } from "../core/i18n.js";
+import { el } from "./shared/dom.js";
+import { panelStyle, headerStyle, titleStyle, subtitleStyle, compactButtonStyle, inputStyle, sectionStyle, labelStyle } from "./shared/uiTheme.js";
 
 const PROJECT_ID = "active";
 let state = { layers: [], rules: {} };
@@ -16,25 +18,10 @@ const panelTranslations = {
   subtitle: () => t("layers.subtitle", "التحكم في الطبقات والتحويل إلى 3D"),
 };
 
-// Helper functions (el, btn) ... same as before
-function el(tag, attrs = {}, children = []) {
-  const n = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "style") Object.assign(n.style, v);
-    else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2), v);
-    else n.setAttribute(k, v);
-  }
-  for (const c of children) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
-  return n;
-}
-
-function btn(label, onClick, color = "#fff", border = "1px solid #ccc") {
+function btn(label, onClick, variant = "ghost", extraStyle = {}) {
   return el("button", {
     type: "button",
-    style: {
-      border: border, background: color, borderRadius: "6px",
-      padding: "6px 10px", cursor: "pointer", fontSize: "12px", fontWeight: "bold", flex: "1"
-    },
+    style: compactButtonStyle(variant, { flex: "1", ...extraStyle }),
     onclick: onClick
   }, [label]);
 }
@@ -45,19 +32,17 @@ let collapsed = false;
 function ensurePanel() {
   if (document.getElementById("layer-rules-panel")) return;
 
-  panel = el("aside", { id: "layer-rules-panel", style: {
-    position: "fixed", left: "20px", top: "20px", width: "420px", height: "85vh",
-    zIndex: 4200, background: "rgba(0,0,0,0.62)", border: "1px solid rgba(255,255,255,0.14)",
-    borderRadius: "16px", boxShadow: "0 14px 36px rgba(0,0,0,0.38)", backdropFilter: "blur(12px)",
-    display: "none", flexDirection: "column", fontFamily: "sans-serif", overflow: "hidden", color: "#fff",
+  panel = el("aside", { id: "layer-rules-panel", style: panelStyle({
+    left: "20px", top: "20px", width: "420px", height: "85vh",
+    display: "none", flexDirection: "column", overflow: "hidden",
     resize: "both", minWidth: "360px", minHeight: "360px"
-  }});
+  })});
 
-  header = el("div", { style: { padding: "12px", background: "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))", borderBottom: "1px solid rgba(255,255,255,0.12)", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "move", touchAction: "none", userSelect: "none" }}, [
-    el("div", {}, [el("div", { id: "layer-rules-title", style: { fontWeight: "800", color: "#fff", fontSize: "13px" }}, [panelTranslations.title()]), el("div", { id: "layer-rules-subtitle", style: { fontSize: "11px", color: "rgba(255,255,255,0.72)" }}, [panelTranslations.subtitle()])]),
+  header = el("div", { style: headerStyle({ cursor: "move", touchAction: "none", userSelect: "none" })}, [
+    el("div", {}, [el("div", { id: "layer-rules-title", style: titleStyle() }, [panelTranslations.title()]), el("div", { id: "layer-rules-subtitle", style: subtitleStyle() }, [panelTranslations.subtitle()])]),
     el("div", { style: { display: "flex", gap: "5px" }}, [
       btn("—", toggleCollapse),
-      btn("✕", hide, "#ffebeb", "1px solid #ffcccc")
+      btn("✕", hide, "danger", { width: "auto" })
     ])
   ]);
 
@@ -69,7 +54,7 @@ function ensurePanel() {
         el("label", { style: { color: "rgba(255,255,255,0.82)" } }, [t("layers.scale", "المقياس") + ":"]),
         el("input", { 
             type: "number", value: "0.001", step: "0.001", 
-            style: { width: "70px", padding: "4px", border: "1px solid rgba(255,255,255,0.18)", borderRadius: "8px", background: "rgba(17,17,17,0.92)", color: "#fff" },
+            style: inputStyle({ width: "70px", padding: "4px", borderRadius: "8px" }),
             onchange: (e) => globalSettings.scale = parseFloat(e.target.value)
         }),
         el("span", { style: { color: "rgba(255,255,255,0.6)" }}, [t("layers.sunInside3d", "الشمس داخل عرض 3D")])
@@ -77,18 +62,18 @@ function ensurePanel() {
     
     // 2. Actions
     el("div", { style: { display: "flex", gap: "5px" }}, [
-        btn("⟳ " + t("layers.scan", "فحص"), refreshFromViewer, "rgba(255,255,255,0.12)", "1px solid rgba(255,255,255,0.16)"),
-        btn("💾 " + t("layers.save", "حفظ"), saveRules, "rgba(255,255,255,0.12)", "1px solid rgba(255,255,255,0.16)"),
+        btn("⟳ " + t("layers.scan", "فحص"), refreshFromViewer),
+        btn("💾 " + t("layers.save", "حفظ"), saveRules),
     ]),
     el("div", { style: { display: "flex", gap: "5px" }}, [
-        btn("📥 " + t("layers.exportJson", "تصدير JSON"), exportFinalJSON, "rgba(255,255,255,0.12)", "1px solid rgba(255,255,255,0.16)"),
-        btn("🚀 " + t("layers.preview3d", "عرض 3D"), preview3D, "rgba(47,111,237,0.22)", "1px solid rgba(87,145,255,0.45)")
+        btn("📥 " + t("layers.exportJson", "تصدير JSON"), exportFinalJSON),
+        btn("🚀 " + t("layers.preview3d", "عرض 3D"), preview3D, "primary")
     ]),
 
     el("input", { 
         type: "search",
         placeholder: t("layers.search", "بحث في الطبقات"), 
-        style: { width: "100%", padding: "8px", border: "1px solid rgba(255,255,255,0.18)", borderRadius: "8px", boxSizing: "border-box", background: "rgba(17,17,17,0.92)", color: "#fff" },
+        style: inputStyle({ borderRadius: "8px" }),
         oninput: renderList
     })
   ]);
@@ -107,6 +92,7 @@ function ensurePanel() {
   loadRules();
   
   window.layerRulesUI = { ensureReady: ensurePanel, show, hide, toggle, isVisible, preview3D, exportFinalJSON, refreshFromViewer };
+  window.layerRulesPanel = window.layerRulesUI;
 
   window.addEventListener("cad:file-loaded", () => {
      if(window.cadApp?.uploader?.file) currentFileName = window.cadApp.uploader.file.name.replace(/\.(dxf|dwg)$/i, "");
@@ -327,7 +313,7 @@ function renderList() {
 }
 
 function typeSelect(layer, rule) {
-    const sel = el("select", { style: { fontSize: "11px", padding: "6px 8px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.18)", background: "rgba(17,17,17,0.92)", color: "#fff" }, onchange: (e) => { 
+    const sel = el("select", { style: inputStyle({ width: "auto", fontSize: "11px", padding: "6px 8px", borderRadius: "8px" }), onchange: (e) => { 
         rule.type = e.target.value; 
         Object.assign(rule, getDefaultsForType(rule.type));
         saveRules(); renderList(); 
@@ -351,7 +337,7 @@ function paramsRow(layer, rule) {
     const inp = (lbl, key, def="0") => {
         c.appendChild(el("div", { style: { display: "flex", flexDirection: "column" }}, [
             el("span", { style: { fontSize: "9px", color: "rgba(255,255,255,0.62)" }}, [lbl]),
-            el("input", { type: "number", value: rule[key]??def, step: "0.1", style: { width: "50px", fontSize: "11px", padding: "3px", border: "1px solid rgba(255,255,255,0.18)", borderRadius: "3px" }, 
+            el("input", { type: "number", value: rule[key]??def, step: "0.1", style: inputStyle({ width: "50px", fontSize: "11px", padding: "3px", borderRadius: "6px" }), 
             oninput: (e) => rule[key] = parseFloat(e.target.value) })
         ]));
     };
@@ -386,6 +372,7 @@ function toggle() {
 }
 
 ensurePanel();
+window.layerRulesPanel = window.layerRulesUI;
 window.addEventListener("cad:language-changed", () => { 
     try { 
         if (panel) {

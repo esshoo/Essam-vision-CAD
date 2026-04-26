@@ -90,14 +90,12 @@ export class CADViewerApp {
 
     const menuConfig = {
       [ToolbarMenuId.Layers]: {
-        onClick: (viewer, toolbar) => {
-          try {
-            window.layerRulesUI?.ensureReady?.();
-            window.layerRulesUI?.toggle?.();
-          } catch (err) {
-            console.error('[LayersButton] Toggle failed:', err);
-          }
+        onClick: (_viewer, toolbar) => {
+          window.layerRulesUI?.toggle?.();
+          try { toolbar?.setActive?.(ToolbarMenuId.Layers, window.layerRulesUI?.isVisible?.() ?? false); } catch (_) {}
         },
+        onActive: () => window.layerRulesUI?.show?.(),
+        onDeactive: () => window.layerRulesUI?.hide?.(),
       },
       [ToolbarMenuId.Markup]: {
         onClick: (_viewer, toolbar) => {

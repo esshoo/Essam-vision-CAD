@@ -1,23 +1,7 @@
 import { THREE } from "@x-viewer/core";
 import { CADLayerKit } from "../CADLayerKit.js";
-
-function css(el, styles) {
-  Object.assign(el.style, styles || {});
-}
-
-function el(tag, attrs = {}, children = []) {
-  const node = document.createElement(tag);
-  Object.entries(attrs).forEach(([k, v]) => {
-    if (k === "style") css(node, v);
-    else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
-    else if (v != null) node[k] = v;
-  });
-  (Array.isArray(children) ? children : [children]).forEach((child) => {
-    if (child == null) return;
-    node.appendChild(typeof child === "string" ? document.createTextNode(child) : child);
-  });
-  return node;
-}
+import { css, el } from "./shared/dom.js";
+import { panelStyle, headerStyle, titleStyle, subtitleStyle, buttonStyle as themeButtonStyle, inputStyle, infoCardStyle as themeInfoCardStyle, sectionStyle as themeSectionStyle, labelStyle as themeLabelStyle } from "./shared/uiTheme.js";
 
 class CADEntityLayerEditor {
   constructor() {
@@ -30,6 +14,7 @@ class CADEntityLayerEditor {
     this.newLayerInput = null;
     this.layerListInfo = null;
     this.restoreBtn = null;
+    this.undoBtn = null; // تمت إضافة زر التراجع
     this.selectedEntries = new Map();
     this.highlightCache = new Map();
     this.edits = this.emptyEdits();
@@ -38,6 +23,10 @@ class CADEntityLayerEditor {
     this.selectionBoxEl = null;
     this.fileName = null;
     this.refreshTimer = null;
+
+    // نظام التراجع
+    this.history = [];
+    this.MAX_HISTORY = 30;
 
     this.boundPointerDown = (e) => this.onPointerDown(e);
     this.boundPointerMove = (e) => this.onPointerMove(e);
@@ -51,6 +40,37 @@ class CADEntityLayerEditor {
     window.addEventListener("cad:file-loaded", this.boundFileLoaded);
     window.addEventListener("cad:annotation-layers-updated", () => this.refreshLayerOptions());
   }
+
+  // --- دوال التراجع (Undo System) ---
+  saveSnapshot() {
+    this.history.push(JSON.stringify(this.edits));
+    if (this.history.length > this.MAX_HISTORY) this.history.shift();
+    this.updateUndoBtn();
+  }
+
+  updateUndoBtn() {
+    if (!this.undoBtn) return;
+    if (this.history.length > 0) {
+      this.undoBtn.style.opacity = "1";
+      this.undoBtn.style.cursor = "pointer";
+      this.undoBtn.disabled = false;
+    } else {
+      this.undoBtn.style.opacity = "0.5";
+      this.undoBtn.style.cursor = "not-allowed";
+      this.undoBtn.disabled = true;
+    }
+  }
+
+  undo() {
+    if (this.history.length === 0) return;
+    const lastState = this.history.pop();
+    this.edits = JSON.parse(lastState);
+    this.saveEdits();
+    this.applyEditsToScene(); // يعيد بناء المشهد للحالة السابقة
+    this.updateUndoBtn();
+    this.clearSelection();
+  }
+  // ------------------------------------
 
   emptyEdits() {
     return {
@@ -70,38 +90,6 @@ class CADEntityLayerEditor {
   getCurrentFileName() { return window.cadApp?.uploader?.file?.name || this.fileName || "active-file"; }
   getStorageKey(name = null) { return `essam-source-entity-edits-v42::${name || this.getCurrentFileName()}`; }
 
-
-
-  makeDraggable(target, handle) {
-    let dragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0, activePointerId = null;
-    const stopEvent = (e) => { e.preventDefault(); e.stopPropagation(); };
-    handle.style.cursor = 'move';
-    handle.style.touchAction = 'none';
-    handle.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('button,input,select,textarea')) return;
-      dragging = true;
-      activePointerId = e.pointerId;
-      handle.setPointerCapture?.(e.pointerId);
-      const rect = target.getBoundingClientRect();
-      startLeft = rect.left; startTop = rect.top; startX = e.clientX; startY = e.clientY;
-      stopEvent(e);
-    });
-    handle.addEventListener('pointermove', (e) => {
-      if (!dragging || e.pointerId !== activePointerId) return;
-      target.style.left = `${startLeft + e.clientX - startX}px`;
-      target.style.top = `${startTop + e.clientY - startY}px`;
-      target.style.right = 'auto';
-      stopEvent(e);
-    });
-    const finish = (e) => {
-      if (!dragging || (activePointerId !== null && e.pointerId !== activePointerId)) return;
-      dragging = false; activePointerId = null;
-      try { handle.releasePointerCapture?.(e.pointerId); } catch (_) {}
-      stopEvent(e);
-    };
-    handle.addEventListener('pointerup', finish);
-    handle.addEventListener('pointercancel', finish);
-  }
   ensureSelectionBox() {
     if (this.selectionBoxEl && document.body.contains(this.selectionBoxEl)) return this.selectionBoxEl;
     this.selectionBoxEl = el("div", {
@@ -163,6 +151,9 @@ class CADEntityLayerEditor {
     } catch (_) {
       this.edits = this.emptyEdits();
     }
+    // مسح الذاكرة عند تحميل ملف جديد
+    this.history = [];
+    this.updateUndoBtn();
     this.updateRestoreInfo();
     return this.edits;
   }
@@ -180,69 +171,70 @@ class CADEntityLayerEditor {
       return;
     }
 
-    const title = el("div", { style: { fontSize: "13px", fontWeight: "800", color: "#fff" } }, ["إدارة عناصر المخطط"]);
-    const sub = el("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.72)", lineHeight: 1.4 } }, ["اختَر عنصرًا أو جزءًا من الرسم مباشرة، ثم انقله لطبقة أخرى أو أخفه أو احذفه."]);
+    const title = el("div", { style: titleStyle() }, ["إدارة عناصر المخطط"]);
+    const sub = el("div", { style: subtitleStyle() }, ["اختَر عنصرًا أو جزءًا من الرسم مباشرة، ثم انقله لطبقة أخرى أو أخفه أو احذفه."]);
 
     this.modeBtn = el("button", {
       type: "button",
       onclick: () => this.toggleMode(),
-      style: this.buttonStyle("#2f6fed")
+      style: this.buttonStyle("primary")
     }, ["🎯 تفعيل اختيار العناصر"]);
 
     const clearBtn = el("button", {
       type: "button",
       onclick: () => this.clearSelection(),
-      style: this.buttonStyle("rgba(255,255,255,0.14)")
+      style: this.buttonStyle("ghost")
     }, ["إلغاء التحديد"]);
 
     this.selectionInfo = el("div", { style: this.infoCardStyle() }, ["لا يوجد عنصر محدد."]);
     this.ensureSelectionBox();
 
     this.layerSelect = el("select", {
-      style: {
-        width: "100%", padding: "8px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.18)",
-        background: "rgba(17,17,17,0.92)", color: "#fff", outline: "none"
-      }
+      style: inputStyle()
     });
 
     const moveBtn = el("button", {
       type: "button",
       onclick: () => this.moveSelectionToLayer(this.layerSelect.value),
-      style: this.buttonStyle("#0f9d58")
+      style: this.buttonStyle("success")
     }, ["نقل المحدد إلى الطبقة المختارة"]);
 
     this.newLayerInput = el("input", {
       type: "text",
       placeholder: "اسم طبقة جديدة",
-      style: {
-        width: "100%", padding: "8px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.18)",
-        background: "rgba(17,17,17,0.92)", color: "#fff", outline: "none", boxSizing: "border-box"
-      }
+      style: inputStyle()
     });
 
     const createMoveBtn = el("button", {
       type: "button",
       onclick: () => this.createLayerAndMoveSelection(),
-      style: this.buttonStyle("#f29900")
+      style: this.buttonStyle("warning")
     }, ["إنشاء طبقة جديدة ونقل المحدد"]);
 
     const hideBtn = el("button", {
       type: "button",
       onclick: () => this.hideSelection(),
-      style: this.buttonStyle("rgba(255,255,255,0.14)")
+      style: this.buttonStyle("ghost")
     }, ["إخفاء المحدد"]);
 
     const deleteBtn = el("button", {
       type: "button",
       onclick: () => this.deleteSelection(),
-      style: this.buttonStyle("#c62828")
+      style: this.buttonStyle("danger")
     }, ["حذف المحدد من المشروع"]);
 
     this.restoreBtn = el("button", {
       type: "button",
       onclick: () => this.restoreAllEdits(),
-      style: this.buttonStyle("rgba(255,255,255,0.14)")
+      style: this.buttonStyle("ghost")
     }, ["استرجاع كل المخفي/المحذوف"]);
+
+    this.undoBtn = el("button", {
+      type: "button",
+      onclick: () => this.undo(),
+      style: this.buttonStyle("undo"), // لون برتقالي لزر التراجع
+      disabled: true
+    }, ["↩ تراجع عن آخر عملية"]);
 
     this.layerListInfo = el("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.72)", lineHeight: 1.4 } }, [""]);
 
@@ -250,22 +242,18 @@ class CADEntityLayerEditor {
       type: "button",
       onclick: () => this.hide(),
       style: {
-        border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.1)", color: "#fff", borderRadius: "10px",
-        padding: "6px 10px", cursor: "pointer", fontWeight: "800"
+        ...themeButtonStyle("ghost", { width: "auto", padding: "6px 10px" })
       }
     }, ["✕"]);
 
-    const header = el("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px" } }, [el("div", {}, [title, sub]), closeBtn]);
+    const header = el("div", { style: headerStyle() }, [el("div", {}, [title, sub]), closeBtn]);
 
     this.panel = el("aside", {
       id: "cad-entity-editor-panel",
-      style: {
-        position: "fixed", right: "18px", top: "18px", width: "360px", maxWidth: "calc(100vw - 36px)",
-        maxHeight: "80vh", overflow: "auto", zIndex: 7002, display: "none", padding: "14px",
-        borderRadius: "16px", border: "1px solid rgba(255,255,255,0.14)",
-        background: "rgba(0,0,0,0.62)", backdropFilter: "blur(10px)", boxShadow: "0 12px 28px rgba(0,0,0,0.35)",
-        resize: "both", minWidth: "320px", minHeight: "220px"
-      }
+      style: panelStyle({
+        right: "18px", top: "18px", width: "360px", maxWidth: "calc(100vw - 36px)",
+        maxHeight: "80vh", overflow: "auto", zIndex: 7002, display: "none", padding: "14px"
+      })
     }, [
       header,
       el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "12px" } }, [this.modeBtn, clearBtn]),
@@ -281,27 +269,22 @@ class CADEntityLayerEditor {
         createMoveBtn,
       ]),
       el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "10px" } }, [hideBtn, deleteBtn]),
-      el("div", { style: { marginTop: "10px" } }, [this.restoreBtn]),
+      el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "10px" } }, [this.undoBtn, this.restoreBtn]), // تم إضافة التراجع هنا
       el("hr", { style: { border: 0, borderTop: "1px solid rgba(255,255,255,0.12)", margin: "12px 0" } }),
       this.layerListInfo,
     ]);
 
     document.body.appendChild(this.panel);
-    this.makeDraggable(this.panel, header);
     this.refreshLayerOptions();
     this.updateRestoreInfo();
+    this.updateUndoBtn();
   }
 
-  buttonStyle(bg) {
-    return {
-      width: "100%", padding: "10px 12px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.16)",
-      background: bg, color: "#fff", cursor: "pointer", fontWeight: "800"
-    };
-  }
+  buttonStyle(variant = "ghost", overrides = {}) { return themeButtonStyle(variant, overrides); }
 
-  sectionStyle() { return { display: "grid", gap: "8px", marginTop: "12px" }; }
-  labelStyle() { return { fontSize: "11px", color: "rgba(255,255,255,0.74)", fontWeight: "700" }; }
-  infoCardStyle() { return { marginTop: "12px", padding: "10px", borderRadius: "12px", background: "rgba(255,255,255,0.08)", color: "#fff", fontSize: "12px", lineHeight: 1.5, whiteSpace: "pre-wrap" }; }
+  sectionStyle() { return themeSectionStyle(); }
+  labelStyle() { return themeLabelStyle(); }
+  infoCardStyle() { return themeInfoCardStyle(); }
 
   show() {
     this.visible = true;
@@ -469,7 +452,6 @@ class CADEntityLayerEditor {
     }
     return this.makeObjectEntry(obj);
   }
-
 
   selectEntries(entries, additive = false) {
     const list = Array.isArray(entries) ? entries.filter(Boolean) : [];
@@ -923,6 +905,7 @@ class CADEntityLayerEditor {
   moveSelectionToLayer(layerName) {
     const target = String(layerName || "").trim();
     if (!target || !this.selectedEntries.size) return;
+    this.saveSnapshot(); // حفظ قبل النقل
     this.selectedEntries.forEach((entry) => this.applyLayerToEntry(entry, target));
     this.saveEdits();
     this.afterSceneMutation();
@@ -931,6 +914,7 @@ class CADEntityLayerEditor {
   createLayerAndMoveSelection() {
     const raw = String(this.newLayerInput?.value || "").trim();
     if (!raw) return;
+    // حفظ التراجع داخل دالة moveSelectionToLayer
     this.moveSelectionToLayer(raw);
     this.newLayerInput.value = "";
   }
@@ -959,6 +943,7 @@ class CADEntityLayerEditor {
 
   hideSelection() {
     if (!this.selectedEntries.size) return;
+    this.saveSnapshot(); // حفظ قبل الإخفاء
     this.selectedEntries.forEach((entry) => this.hideEntry(entry));
     this.saveEdits();
     this.clearSelection();
@@ -967,6 +952,7 @@ class CADEntityLayerEditor {
 
   deleteSelection() {
     if (!this.selectedEntries.size) return;
+    this.saveSnapshot(); // حفظ قبل الحذف
     this.selectedEntries.forEach((entry) => this.deleteEntry(entry));
     this.saveEdits();
     this.clearSelection();
@@ -1064,6 +1050,7 @@ class CADEntityLayerEditor {
   }
 
   restoreAllEdits() {
+    this.saveSnapshot(); // حفظ قبل استرجاع الكل لتمكين التراجع
     this.edits = this.emptyEdits();
     this.saveEdits();
     const scene = this.getScene();

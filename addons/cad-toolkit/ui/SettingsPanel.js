@@ -1,24 +1,17 @@
 import { t, setLanguage, getCurrentLanguage } from '../core/i18n.js';
+import { buttonStyle, inputStyle, sectionStyle, labelStyle } from './shared/uiTheme.js';
+import { openSourceFile, refreshPage, openAnnotationsJson, openSaved3DView } from './shared/fileActions.js';
 
 function style(node, styles) {
   Object.assign(node.style, styles || {});
   return node;
 }
 
-function makeButton(label, onClick) {
+function makeButton(label, onClick, variant = 'ghost') {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.textContent = label;
-  style(btn, {
-    border: '1px solid rgba(255,255,255,0.16)',
-    background: 'rgba(255,255,255,0.08)',
-    color: '#fff',
-    borderRadius: '8px',
-    padding: '6px 10px',
-    cursor: 'pointer',
-    fontWeight: '700',
-    fontSize: '12px'
-  });
+  style(btn, buttonStyle(variant, { padding: '6px 10px' }));
   btn.addEventListener('click', onClick);
   return btn;
 }
@@ -49,11 +42,7 @@ class CADSettingsPanelAugmenter {
     const wrap = document.createElement('div');
     wrap.id = 'essam-settings-extra';
     style(wrap, {
-      marginTop: '12px',
-      paddingTop: '12px',
-      borderTop: '1px solid rgba(255,255,255,0.12)',
-      display: 'grid',
-      gap: '10px',
+      ...sectionStyle({ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.12)' }),
       color: '#fff'
     });
 
@@ -66,18 +55,11 @@ class CADSettingsPanelAugmenter {
     style(langLabel, { display: 'grid', gap: '6px', fontSize: '11px' });
     const langText = document.createElement('span');
     langText.id = 'essam-settings-language-text';
+    style(langText, labelStyle());
 
     const select = document.createElement('select');
     select.id = 'essam-settings-language-select';
-    style(select, {
-      width: '100%',
-      padding: '6px',
-      borderRadius: '8px',
-      border: '1px solid rgba(255,255,255,0.18)',
-      background: 'rgba(17,17,17,0.92)',
-      color: '#fff',
-      outline: 'none'
-    });
+    style(select, inputStyle({ padding: '6px', borderRadius: '8px' }));
     const ar = document.createElement('option'); ar.value = 'ar'; ar.textContent = 'العربية';
     const en = document.createElement('option'); en.value = 'en'; en.textContent = 'English';
     select.append(ar, en);
@@ -96,10 +78,10 @@ class CADSettingsPanelAugmenter {
     style(actions, { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' });
 
     actions.append(
-      makeButton(t('settings.openFile', 'فتح ملف'), () => window.cadApp?.openFileUpload?.()),
-      makeButton(t('settings.refreshPage', 'تحديث الصفحة'), () => window.location.reload()),
-      makeButton(t('settings.openJson2d', 'فتح JSON 2D'), () => window.cadDrawingOverlay?.importAnnotationsJson?.()),
-      makeButton(t('settings.openJson3d', 'فتح JSON 3D'), () => window.cad3dOpen?.())
+      makeButton(t('settings.openFile', 'فتح ملف'), openSourceFile),
+      makeButton(t('settings.refreshPage', 'تحديث الصفحة'), refreshPage),
+      makeButton(t('settings.openJson2d', 'فتح JSON 2D'), openAnnotationsJson),
+      makeButton(t('settings.openJson3d', 'فتح JSON 3D'), openSaved3DView)
     );
 
     const note = document.createElement('div');

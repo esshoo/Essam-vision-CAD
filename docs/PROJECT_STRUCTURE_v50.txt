@@ -1,0 +1,29 @@
+Essam Vision CAD - v50 structure notes
+
+Base version:
+- Built on v47 toolbar/settings stable line
+- Replaced LayerRulesPanel.js with user fixed version
+- Replaced EntityLayerEditor.js with user version that adds Undo
+
+Shared UI foundation added:
+- addons/cad-toolkit/ui/shared/dom.js
+- addons/cad-toolkit/ui/shared/uiTheme.js
+- addons/cad-toolkit/ui/shared/fileActions.js
+
+What was unified:
+- Button styles
+- Panel shell styles
+- Header/title/subtitle styles
+- Input styles
+- Common file actions reused by toolbar/settings
+
+Files refactored to use shared foundation:
+- addons/cad-toolkit/ui/LayerRulesPanel.js
+- addons/cad-toolkit/ui/EntityLayerEditor.js
+- addons/cad-toolkit/ui/SettingsPanel.js
+- addons/cad-toolkit/ui/NativeToolbarBridge.js
+
+Notes:
+- Minified third-party libraries were intentionally not reformatted or split.
+- Large app files like DrawingOverlay.js were kept intact to avoid runtime regressions.
+- This refactor focuses on project-owned UI files and maintainability without breaking current behavior.

@@ -1,5 +1,6 @@
 import { ToolbarMenuId, ToolbarMenuType } from '@x-viewer/plugins';
 import { initI18n, t, getCurrentLanguage } from '../core/i18n.js';
+import { openSourceFile, refreshPage, openAnnotationsJson, openSaved3DView } from './shared/fileActions.js';
 
 const CUSTOM_IDS = {
   OPEN: 'EssamOpenActions',
@@ -66,25 +67,25 @@ function addCustomMenus(toolbar) {
         customElement: makeToolbarElement(CUSTOM_IDS.OPEN_FILE, '📁', 'toolbar.openFile'),
         menuName: 'toolbar.openFile',
         type: ToolbarMenuType.Button,
-        onClick: () => window.cadApp?.openFileUpload?.()
+        onClick: openSourceFile
       },
       [CUSTOM_IDS.REFRESH]: {
         customElement: makeToolbarElement(CUSTOM_IDS.REFRESH, '🔄', 'toolbar.refreshPage'),
         menuName: 'toolbar.refreshPage',
         type: ToolbarMenuType.Button,
-        onClick: () => window.location.reload()
+        onClick: refreshPage
       },
       [CUSTOM_IDS.OPEN_JSON_2D]: {
         customElement: makeToolbarElement(CUSTOM_IDS.OPEN_JSON_2D, '📝', 'toolbar.openJson2d'),
         menuName: 'toolbar.openJson2d',
         type: ToolbarMenuType.Button,
-        onClick: () => window.cadDrawingOverlay?.importAnnotationsJson?.()
+        onClick: openAnnotationsJson
       },
       [CUSTOM_IDS.OPEN_JSON_3D]: {
         customElement: makeToolbarElement(CUSTOM_IDS.OPEN_JSON_3D, '🧊', 'toolbar.openJson3d'),
         menuName: 'toolbar.openJson3d',
         type: ToolbarMenuType.Button,
-        onClick: () => window.cad3dOpen?.()
+        onClick: openSaved3DView
       },
     }
   }, true);
@@ -105,44 +106,6 @@ function addCustomMenus(toolbar) {
       else if (window.cad3dOpen) window.cad3dOpen();
     }
   });
-}
-
-
-function bindBuiltinLayersButton(toolbar) {
-  try {
-    const menu = toolbar?.menuList?.get?.(ToolbarMenuId.Layers);
-    const el = menu?.element;
-    if (!el) return;
-
-    const openLayers = (e) => {
-      try {
-        e?.preventDefault?.();
-        e?.stopImmediatePropagation?.();
-        e?.stopPropagation?.();
-        window.layerRulesUI?.ensureReady?.();
-        window.layerRulesUI?.toggle?.();
-        menu?.setActive?.(false);
-        el.classList.remove('toolbar-menu-active', 'toolbar-parent-menu-active', 'active');
-      } catch (err) {
-        console.error('[ToolbarBridge] Layers button failed:', err);
-      }
-      return false;
-    };
-
-    if (el.dataset.essamLayersBound !== '1') {
-      el.dataset.essamLayersBound = '1';
-      el.addEventListener('click', openLayers, true);
-      el.addEventListener('touchstart', openLayers, { capture: true, passive: false });
-    }
-
-    el.onclick = openLayers;
-    el.ontouchstart = openLayers;
-    if (menu) {
-      menu.setActive?.(false);
-    }
-  } catch (err) {
-    console.error('[ToolbarBridge] bindBuiltinLayersButton failed:', err);
-  }
 }
 
 function relabelMenuElement(menu, key) {
@@ -169,18 +132,15 @@ async function setupToolbarBridge() {
 
   addCustomMenus(toolbar);
   relabelToolbar(toolbar);
-  bindBuiltinLayersButton(toolbar);
 
   const refreshLabels = () => {
     try { toolbar.refresh?.(); } catch (_) {}
     setTimeout(() => {
       relabelToolbar(toolbar);
-      bindBuiltinLayersButton(toolbar);
       window.cadSettingsUI?.ensureInjected?.();
     }, 0);
     setTimeout(() => {
       relabelToolbar(toolbar);
-      bindBuiltinLayersButton(toolbar);
       window.cadSettingsUI?.ensureInjected?.();
     }, 120);
   };
@@ -191,7 +151,6 @@ async function setupToolbarBridge() {
   document.addEventListener('click', () => {
     setTimeout(() => {
       relabelToolbar(toolbar);
-      bindBuiltinLayersButton(toolbar);
       window.cadSettingsUI?.ensureInjected?.();
     }, 0);
   }, true);
