@@ -87,12 +87,14 @@
   "layerTypes": {
     "lines": "Lines",
     "walls": "Walls",
+    "columns": "Columns",
     "floor": "Floor",
     "ceiling": "Ceiling",
     "beams": "Beam",
     "lights": "Light",
     "glass": "Glass",
     "door": "Door/Window",
+    "furniture": "Furniture",
     "hide": "Hide"
   },
   "three": {

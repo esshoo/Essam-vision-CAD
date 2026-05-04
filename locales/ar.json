@@ -87,12 +87,14 @@
   "layerTypes": {
     "lines": "خطوط",
     "walls": "حوائط",
+    "columns": "أعمدة",
     "floor": "أرضية",
     "ceiling": "سقف",
     "beams": "كمرة",
     "lights": "إضاءة",
     "glass": "زجاج",
     "door": "باب/نافذة",
+    "furniture": "فرش",
     "hide": "إخفاء"
   },
   "three": {

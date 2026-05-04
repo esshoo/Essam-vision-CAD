@@ -1,5 +1,6 @@
 import { THREE, Viewer2d } from "@x-viewer/core";
 import { t, getCurrentLanguage } from "../core/i18n.js";
+import { ContentRecognition } from "../core/ContentRecognition.js";
 import {
   LocalDxfUploader,
   PdfLoaderPlugin,
@@ -25,6 +26,14 @@ export class CADViewerApp {
     this.language = options.language || getCurrentLanguage();
     this.uploader = null;
     this.layerManager = null;
+    this.contentRecognition = null;
+
+    // Current loaded model state.
+    // These values let the CAD core read x-viewer model data before falling back to scene traversal.
+    this.currentModel = null;
+    this.currentModels = [];
+    this.currentFile = null;
+    this.currentFileName = null;
 
     // PDF state
     this._pdfPlugin = null;
@@ -57,6 +66,7 @@ export class CADViewerApp {
     };
 
     this.viewer = new Viewer2d(viewerCfg);
+    this.contentRecognition = new ContentRecognition(this);
 
     // Fonts
     try {
@@ -217,6 +227,7 @@ export class CADViewerApp {
         );
 
         app.viewer.addModel(model);
+        app._syncCurrentModel(file, file.name);
 
         app._pdfPageCount = app._pdfPlugin.getPageCount?.() || 0;
         app._pdfCurrentPage = 1;
@@ -251,6 +262,7 @@ export class CADViewerApp {
             merge: true, src: URL.createObjectURL(file), modelId: file.name
         });
         await this.viewer.loadModel(modelConfig, onProgress);
+        app._syncCurrentModel(file, file.name);
         this.onSuccess && this.onSuccess({ file, fileName: file.name });
       } catch (e) {
         console.error(e);
@@ -348,7 +360,8 @@ export class CADViewerApp {
     if (this._pdfPagerSelect) this._pdfPagerSelect.value = String(pageNo);
     this.viewer.enableRender?.();
 
-    window.dispatchEvent(new CustomEvent("cad:pdf-page-changed", { detail: { page: pageNo } }));
+    this._syncCurrentModel(this.currentFile, this.currentFileName);
+    window.dispatchEvent(new CustomEvent("cad:pdf-page-changed", { detail: { page: pageNo, model: this.currentModel, models: this.currentModels } }));
 
     this._schedulePdfFit(260);
     this._tryFlattenCamera();
@@ -449,6 +462,38 @@ export class CADViewerApp {
     } catch (_) {}
   }
 
+
+  _syncCurrentModel(file = null, fileName = null) {
+    try {
+      this.currentFile = file || this.currentFile || this.uploader?.file || null;
+      this.currentFileName = fileName || this.currentFile?.name || this.uploader?.file?.name || null;
+      this.currentModels = Array.isArray(this.viewer?.loadedModels) ? this.viewer.loadedModels.slice() : [];
+      this.currentModel = this.currentModels[this.currentModels.length - 1] || null;
+
+      window.dispatchEvent(new CustomEvent("cad:model-ready", {
+        detail: {
+          app: this,
+          viewer: this.viewer,
+          file: this.currentFile,
+          fileName: this.currentFileName,
+          model: this.currentModel,
+          models: this.currentModels,
+        }
+      }));
+
+      // Secondary PDF content recognition:
+      // If x-viewer exposes only one model layer, this extracts embedded text/images as semantic layers.
+      if (/\.pdf$/i.test(String(this.currentFileName || ""))) {
+        this.contentRecognition?.recognizeCurrentFile?.({
+          file: this.currentFile,
+          fileName: this.currentFileName,
+          page: this._pdfCurrentPage || 1,
+        });
+      }
+    } catch (err) {
+      console.warn("[CADViewerApp] Failed to sync current model:", err);
+    }
+  }
 
   _detectAppleMobile() {
     const ua = navigator.userAgent || "";

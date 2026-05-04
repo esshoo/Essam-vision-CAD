@@ -1,5 +1,7 @@
 import { THREE } from "@x-viewer/core";
 import { CADLayerKit } from "../CADLayerKit.js";
+import { ScreenSelectionBridge } from "../core/ScreenSelectionBridge.js";
+import { EntityRenderBridge } from "../core/EntityRenderBridge.js";
 import { css, el } from "./shared/dom.js";
 import { panelStyle, headerStyle, titleStyle, subtitleStyle, buttonStyle as themeButtonStyle, inputStyle, infoCardStyle as themeInfoCardStyle, sectionStyle as themeSectionStyle, labelStyle as themeLabelStyle } from "./shared/uiTheme.js";
 
@@ -23,6 +25,8 @@ class CADEntityLayerEditor {
     this.selectionBoxEl = null;
     this.fileName = null;
     this.refreshTimer = null;
+    this.screenSelectionBridge = null;
+    this.entityRenderBridge = null;
 
     // نظام التراجع
     this.history = [];
@@ -34,39 +38,55 @@ class CADEntityLayerEditor {
     this.boundContextMenu = (e) => this.onContextMenu(e);
     this.boundKeyDown = (e) => this.onKeyDown(e);
     this.boundFileLoaded = () => this.onFileLoaded();
+    this.boundEntityRegistryReady = () => this.onEntityRegistryReady();
 
     this.ensurePanel();
     requestAnimationFrame(() => this.refreshLayerOptions());
     window.addEventListener("cad:file-loaded", this.boundFileLoaded);
+    window.addEventListener("cad:entity-registry-ready", this.boundEntityRegistryReady);
     window.addEventListener("cad:annotation-layers-updated", () => this.refreshLayerOptions());
   }
 
   // --- دوال التراجع (Undo System) ---
+  captureSnapshot() {
+    return {
+      schema: "essam-entity-editor-snapshot@2",
+      edits: JSON.parse(JSON.stringify(this.edits || this.emptyEdits())),
+      registry: this.getRegistry()?.exportState?.() || null,
+    };
+  }
+
   saveSnapshot() {
-    this.history.push(JSON.stringify(this.edits));
+    this.history.push(this.captureSnapshot());
     if (this.history.length > this.MAX_HISTORY) this.history.shift();
+    this.updateUndoBtn();
+  }
+
+  clearHistory() {
+    this.history = [];
     this.updateUndoBtn();
   }
 
   updateUndoBtn() {
     if (!this.undoBtn) return;
-    if (this.history.length > 0) {
-      this.undoBtn.style.opacity = "1";
-      this.undoBtn.style.cursor = "pointer";
-      this.undoBtn.disabled = false;
-    } else {
-      this.undoBtn.style.opacity = "0.5";
-      this.undoBtn.style.cursor = "not-allowed";
-      this.undoBtn.disabled = true;
-    }
+    const enabled = this.history.length > 0;
+    this.undoBtn.style.opacity = enabled ? "1" : "0.45";
+    this.undoBtn.style.cursor = enabled ? "pointer" : "not-allowed";
+    this.undoBtn.disabled = !enabled;
   }
 
   undo() {
     if (this.history.length === 0) return;
     const lastState = this.history.pop();
-    this.edits = JSON.parse(lastState);
-    this.saveEdits();
-    this.applyEditsToScene(); // يعيد بناء المشهد للحالة السابقة
+    try {
+      const snapshot = typeof lastState === "string" ? { edits: JSON.parse(lastState), registry: null } : lastState;
+      this.edits = snapshot?.edits || this.emptyEdits();
+      if (snapshot?.registry) this.getRegistry()?.restoreState?.(snapshot.registry);
+      this.saveEdits();
+      this.applyEditsToScene({ fromUndo: true });
+    } catch (err) {
+      console.warn("[EntityLayerEditor] Undo failed", err);
+    }
     this.updateUndoBtn();
     this.clearSelection();
   }
@@ -89,6 +109,62 @@ class CADEntityLayerEditor {
   getContainer() { return document.getElementById(window.cadApp?.containerId || "myCanvas") || null; }
   getCurrentFileName() { return window.cadApp?.uploader?.file?.name || this.fileName || "active-file"; }
   getStorageKey(name = null) { return `essam-source-entity-edits-v42::${name || this.getCurrentFileName()}`; }
+  getRegistry() { return window.__essamEntityRegistry || null; }
+  getLayerManager() { return window.__essamLayerManager || null; }
+  getSelectionEngine() { return window.__essamSelectionEngine || null; }
+
+  getScreenSelectionBridge() {
+    const registry = this.getRegistry();
+    const viewer = this.getViewer();
+    if (!registry || !viewer) return null;
+    if (!this.screenSelectionBridge) {
+      this.screenSelectionBridge = new ScreenSelectionBridge({
+        viewer,
+        registry,
+        selectionEngine: this.getSelectionEngine(),
+        container: this.getContainer(),
+        renderBridge: this.getEntityRenderBridge(),
+      });
+      window.__essamScreenSelectionBridge = this.screenSelectionBridge;
+    } else {
+      this.screenSelectionBridge.setContext({
+        viewer,
+        registry,
+        selectionEngine: this.getSelectionEngine(),
+        container: this.getContainer(),
+        renderBridge: this.getEntityRenderBridge(),
+      });
+    }
+    return this.screenSelectionBridge;
+  }
+
+  getEntityRenderBridge() {
+    const registry = this.getRegistry();
+    const viewer = this.getViewer();
+    if (!registry || !viewer) return null;
+    if (!this.entityRenderBridge) {
+      this.entityRenderBridge = new EntityRenderBridge({ viewer, registry });
+      window.__essamEntityRenderBridge = this.entityRenderBridge;
+    } else {
+      this.entityRenderBridge.setContext({ viewer, registry });
+    }
+    return this.entityRenderBridge;
+  }
+
+  rebuildManagedEntityRender() {
+    const bridge = this.getEntityRenderBridge();
+    if (!bridge) return null;
+    if (this.enabled) return bridge.rebuild();
+    return bridge.getDebugSummary?.() || null;
+  }
+
+  onEntityRegistryReady() {
+    this.getScreenSelectionBridge()?.syncSelectionHighlights?.();
+    const renderBridge = this.getEntityRenderBridge();
+    if (this.enabled) renderBridge?.enable?.();
+    this.refreshLayerOptions();
+    this.updateSelectionInfo();
+  }
 
   ensureSelectionBox() {
     if (this.selectionBoxEl && document.body.contains(this.selectionBoxEl)) return this.selectionBoxEl;
@@ -223,6 +299,30 @@ class CADEntityLayerEditor {
       style: this.buttonStyle("danger")
     }, ["حذف المحدد من المشروع"]);
 
+    const selectLayerBtn = el("button", {
+      type: "button",
+      onclick: () => this.selectFullLayersFromSelection(),
+      style: this.buttonStyle("ghost")
+    }, ["تحديد كامل طبقة المحدد"]);
+
+    const moveLayerBtn = el("button", {
+      type: "button",
+      onclick: () => this.moveSelectedLayersToLayer(this.layerSelect.value),
+      style: this.buttonStyle("success")
+    }, ["نقل طبقة/طبقات المحدد"]);
+
+    const hideLayerBtn = el("button", {
+      type: "button",
+      onclick: () => this.hideSelectedLayers(),
+      style: this.buttonStyle("ghost")
+    }, ["إخفاء طبقة/طبقات المحدد"]);
+
+    const deleteLayerBtn = el("button", {
+      type: "button",
+      onclick: () => this.deleteSelectedLayers(),
+      style: this.buttonStyle("danger")
+    }, ["حذف طبقة/طبقات المحدد"]);
+
     this.restoreBtn = el("button", {
       type: "button",
       onclick: () => this.restoreAllEdits(),
@@ -269,6 +369,12 @@ class CADEntityLayerEditor {
         createMoveBtn,
       ]),
       el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "10px" } }, [hideBtn, deleteBtn]),
+      el("div", { style: this.sectionStyle() }, [
+        el("div", { style: this.labelStyle() }, ["عمليات على كامل الطبقة/الطبقات"]),
+        selectLayerBtn,
+        moveLayerBtn,
+        el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" } }, [hideLayerBtn, deleteLayerBtn]),
+      ]),
       el("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "10px" } }, [this.undoBtn, this.restoreBtn]), // تم إضافة التراجع هنا
       el("hr", { style: { border: 0, borderTop: "1px solid rgba(255,255,255,0.12)", margin: "12px 0" } }),
       this.layerListInfo,
@@ -312,6 +418,8 @@ class CADEntityLayerEditor {
       container?.addEventListener("contextmenu", this.boundContextMenu, true);
       window.addEventListener("keydown", this.boundKeyDown, true);
       document.body.style.cursor = "crosshair";
+      this.getEntityRenderBridge()?.enable?.();
+      this.getScreenSelectionBridge()?.setContext?.({ viewer: this.getViewer(), registry: this.getRegistry(), selectionEngine: this.getSelectionEngine(), container: this.getContainer(), renderBridge: this.getEntityRenderBridge() });
       this.modeBtn.textContent = "✅ اختيار العناصر مفعل";
       css(this.modeBtn, { background: "#0f9d58" });
     } else {
@@ -326,6 +434,7 @@ class CADEntityLayerEditor {
       this.pointerDown = null;
       this.dragSelect = null;
       this.hideSelectionBox();
+      this.getEntityRenderBridge()?.disable?.();
     }
   }
 
@@ -345,7 +454,7 @@ class CADEntityLayerEditor {
       return;
     }
     if (event.button !== 0) return;
-    this.pointerDown = { x: event.clientX, y: event.clientY, shift: !!event.shiftKey, ctrl: !!event.ctrlKey, time: performance.now() };
+    this.pointerDown = { x: event.clientX, y: event.clientY, shift: !!event.shiftKey, ctrl: !!event.ctrlKey, pointerType: event.pointerType || "mouse", time: performance.now() };
   }
 
   onPointerMove(event) {
@@ -432,6 +541,12 @@ class CADEntityLayerEditor {
   }
 
   pickEntity(clientX, clientY) {
+    const coreEntry = this.getScreenSelectionBridge()?.pickEntryAt?.(clientX, clientY, {
+      tolerance: this.pointerDown?.pointerType === "touch" ? 18 : this.pointerDown?.pointerType === "pen" ? 12 : 10,
+      worldThreshold: this.getLineThreshold(clientX, clientY),
+    });
+    if (coreEntry) return coreEntry;
+
     const camera = this.getCamera();
     const container = this.getContainer();
     if (!camera || !container) return null;
@@ -446,6 +561,11 @@ class CADEntityLayerEditor {
     const hit = intersects[0];
     const obj = hit.object || null;
     if (!obj) return null;
+    const managedEntityId = obj.userData?.__essamCoreEntityId;
+    if (managedEntityId && this.getRegistry()?.get?.(managedEntityId)) {
+      const entity = this.getRegistry().get(managedEntityId);
+      return { id: entity.id, kind: "coreEntity", entity, layerName: entity.layer || "0", hit: { reason: "managed-render-fallback-raycast", rawHit: hit } };
+    }
     if (this.isSegmentedObject(obj)) {
       const compEntry = this.resolveComponentEntry(obj, hit);
       if (compEntry) return compEntry;
@@ -456,15 +576,21 @@ class CADEntityLayerEditor {
   selectEntries(entries, additive = false) {
     const list = Array.isArray(entries) ? entries.filter(Boolean) : [];
     if (!additive) this.clearSelection();
+    const coreIds = list.filter((entry) => entry.kind === "coreEntity").map((entry) => entry.id);
+    if (coreIds.length) this.getRegistry()?.selectMany?.(coreIds, { additive: true });
     list.forEach((entry) => {
       if (!entry?.id || this.selectedEntries.has(entry.id)) return;
       this.selectedEntries.set(entry.id, entry);
       this.highlightEntry(entry);
     });
+    this.getScreenSelectionBridge()?.syncSelectionHighlights?.();
     this.updateSelectionInfo();
   }
 
   collectEntriesInScreenRect(rect) {
+    const coreEntries = this.getScreenSelectionBridge()?.queryInScreenRect?.(rect, {});
+    if (coreEntries?.length) return coreEntries;
+
     const scene = this.getScene();
     const camera = this.getCamera();
     const container = this.getContainer();
@@ -762,20 +888,33 @@ class CADEntityLayerEditor {
     if (this.selectedEntries.has(entry.id)) {
       this.unhighlightEntry(this.selectedEntries.get(entry.id));
       this.selectedEntries.delete(entry.id);
+      const entity = this.getRegistry()?.get?.(entry.id);
+      if (entity) {
+        entity.selected = false;
+        this.getRegistry()?.selectedIds?.delete?.(entry.id);
+      }
     } else {
       this.selectedEntries.set(entry.id, entry);
+      if (entry.kind === "coreEntity") this.getRegistry()?.select?.(entry.id, { additive: true });
       this.highlightEntry(entry);
     }
+    this.getScreenSelectionBridge()?.syncSelectionHighlights?.();
     this.updateSelectionInfo();
   }
 
   clearSelection() {
     Array.from(this.selectedEntries.values()).forEach((entry) => this.unhighlightEntry(entry));
     this.selectedEntries.clear();
+    this.getRegistry()?.clearSelection?.();
+    this.getScreenSelectionBridge()?.clearHighlights?.();
     this.updateSelectionInfo();
   }
 
   highlightEntry(entry) {
+    if (entry?.kind === "coreEntity") {
+      this.getScreenSelectionBridge()?.syncSelectionHighlights?.();
+      return;
+    }
     if (!entry?.obj) return;
     if (entry.kind === "component" && this.isSegmentedObject(entry.obj)) {
       const scene = this.getScene();
@@ -816,6 +955,10 @@ class CADEntityLayerEditor {
   }
 
   unhighlightEntry(entry) {
+    if (entry?.kind === "coreEntity") {
+      this.getScreenSelectionBridge()?.syncSelectionHighlights?.();
+      return;
+    }
     if (!entry?.id) return;
     const saved = this.highlightCache.get(entry.id);
     if (!saved) return;
@@ -844,12 +987,13 @@ class CADEntityLayerEditor {
       this.selectionInfo.textContent = "لا يوجد عنصر محدد. فعّل اختيار العناصر ثم اضغط على عنصر، أو اسحب بالزر الأيمن لتحديد مساحة. يمكنك أيضًا إضافة عناصر متعددة بالضغط مع Shift.";
       return;
     }
-    const layers = Array.from(new Set(items.map((entry) => entry.kind === "component" ? this.getEffectiveComponentLayer(entry.obj, entry.component.id) : this.getEffectiveObjectLayer(entry.obj))));
-    const kinds = Array.from(new Set(items.map((entry) => entry.kind === "component" ? "جزء من طبقة" : (entry.obj.type || "Object"))));
+    const layers = Array.from(new Set(items.map((entry) => entry.kind === "coreEntity" ? (entry.entity?.layer || entry.layerName || "0") : entry.kind === "component" ? this.getEffectiveComponentLayer(entry.obj, entry.component.id) : this.getEffectiveObjectLayer(entry.obj))));
+    const kinds = Array.from(new Set(items.map((entry) => entry.kind === "coreEntity" ? (entry.entity?.kind || "Entity") : entry.kind === "component" ? "جزء من طبقة" : (entry.obj.type || "Object"))));
     const text = [
       `العناصر المحددة: ${items.length}`,
-      `الطبقة الحالية: ${layers.length === 1 ? layers[0] : "متعددة"}`,
+      `الطبقة الحالية: ${layers.length === 1 ? layers[0] : `متعددة (${layers.length})`}`,
       `النوع: ${kinds.join(" / ")}`,
+      `يمكنك تطبيق العملية على المحدد فقط، أو على كامل طبقة/طبقات العناصر المحددة.`,
       `تلميح: Shift لإضافة عناصر، أو اسحب بالزر الأيمن لتحديد مساحة.`
     ].join("\n");
     this.selectionInfo.textContent = text;
@@ -857,6 +1001,13 @@ class CADEntityLayerEditor {
 
   getCurrentLayerNames() {
     try {
+      const regLayers = this.getRegistry()?.listLayers?.();
+      if (Array.isArray(regLayers) && regLayers.length) {
+        const names = new Set(regLayers.map((layer) => layer.name || layer.id).filter(Boolean));
+        Object.values(this.edits.layerByComponentId || {}).forEach((name) => { if (name) names.add(name); });
+        (window.cadDrawingOverlay?.getAnnotationLayerNames?.() || []).forEach((name) => names.add(name));
+        return Array.from(names).sort((a, b) => a.localeCompare(b));
+      }
       const viewer = this.getViewer();
       const scene = this.getScene();
       const names = new Set();
@@ -902,12 +1053,97 @@ class CADEntityLayerEditor {
     return this.edits.layerByComponentId?.[componentId] || obj.userData?.__sourceOriginalLayer || this.resolveLayerName(obj) || "0";
   }
 
+  makeCoreEntry(entity) {
+    if (!entity?.id) return null;
+    return {
+      id: entity.id,
+      kind: "coreEntity",
+      entity,
+      layerName: entity.layer || "0",
+      hit: { reason: "entity-layer-editor" },
+    };
+  }
+
+  getSelectedLayerIds() {
+    const layers = new Set();
+    for (const entry of this.selectedEntries.values()) {
+      if (entry?.kind === "coreEntity") layers.add(entry.entity?.layer || entry.layerName || "0");
+      else if (entry?.kind === "component") layers.add(this.getEffectiveComponentLayer(entry.obj, entry.component.id));
+      else if (entry?.obj) layers.add(this.getEffectiveObjectLayer(entry.obj));
+    }
+    this.getRegistry()?.getSelected?.()?.forEach((entity) => layers.add(entity.layer || "0"));
+    return Array.from(layers).filter(Boolean);
+  }
+
+  syncSelectedEntriesFromRegistry() {
+    const selected = this.getRegistry()?.getSelected?.() || [];
+    this.selectedEntries.clear();
+    selected.forEach((entity) => {
+      const entry = this.makeCoreEntry(entity);
+      if (entry) this.selectedEntries.set(entry.id, entry);
+    });
+    this.getScreenSelectionBridge()?.syncSelectionHighlights?.();
+    this.updateSelectionInfo();
+  }
+
+  selectFullLayersFromSelection({ additive = false } = {}) {
+    const layerIds = this.getSelectedLayerIds();
+    if (!layerIds.length) return 0;
+    const count = this.getRegistry()?.selectLayers?.(layerIds, { additive, includeHidden: false }) || 0;
+    this.syncSelectedEntriesFromRegistry();
+    return count;
+  }
+
+  moveSelectedLayersToLayer(layerName) {
+    const target = String(layerName || "").trim();
+    const layerIds = this.getSelectedLayerIds();
+    if (!target || !layerIds.length) return;
+    this.saveSnapshot();
+    let moved = 0;
+    const registry = this.getRegistry();
+    for (const layerId of layerIds) moved += registry?.moveLayerToLayer?.(layerId, target) || 0;
+    registry?.selectLayer?.(target, { additive: false, includeHidden: false });
+    this.syncSelectedEntriesFromRegistry();
+    this.saveEdits();
+    this.afterSceneMutation();
+    return moved;
+  }
+
+  hideSelectedLayers() {
+    const layerIds = this.getSelectedLayerIds();
+    if (!layerIds.length) return;
+    this.saveSnapshot();
+    let count = 0;
+    const registry = this.getRegistry();
+    for (const layerId of layerIds) count += registry?.hideLayer?.(layerId, true) || 0;
+    this.selectedEntries.clear();
+    this.saveEdits();
+    this.clearSelection();
+    this.afterSceneMutation();
+    return count;
+  }
+
+  deleteSelectedLayers() {
+    const layerIds = this.getSelectedLayerIds();
+    if (!layerIds.length) return;
+    this.saveSnapshot();
+    let count = 0;
+    const registry = this.getRegistry();
+    for (const layerId of layerIds) count += registry?.deleteLayer?.(layerId, true) || 0;
+    this.selectedEntries.clear();
+    this.saveEdits();
+    this.clearSelection();
+    this.afterSceneMutation();
+    return count;
+  }
+
   moveSelectionToLayer(layerName) {
     const target = String(layerName || "").trim();
     if (!target || !this.selectedEntries.size) return;
     this.saveSnapshot(); // حفظ قبل النقل
     this.selectedEntries.forEach((entry) => this.applyLayerToEntry(entry, target));
     this.saveEdits();
+    this.syncSelectedEntriesFromRegistry();
     this.afterSceneMutation();
   }
 
@@ -920,6 +1156,12 @@ class CADEntityLayerEditor {
   }
 
   applyLayerToEntry(entry, layerName) {
+    if (entry?.kind === "coreEntity") {
+      this.getRegistry()?.moveToLayer?.(entry.id, layerName);
+      if (entry.entity) entry.entity.layer = layerName;
+      entry.layerName = layerName;
+      return;
+    }
     if (!entry?.obj) return;
     if (entry.kind === "component") {
       this.edits.layerByComponentId[entry.component.id] = layerName;
@@ -960,6 +1202,10 @@ class CADEntityLayerEditor {
   }
 
   hideEntry(entry) {
+    if (entry?.kind === "coreEntity") {
+      this.getRegistry()?.hide?.(entry.id, true);
+      return;
+    }
     if (entry.kind === "component") {
       this.pushUnique(this.edits.hiddenComponentIds, entry.component.id);
       this.removeValue(this.edits.deletedComponentIds, entry.component.id);
@@ -975,6 +1221,10 @@ class CADEntityLayerEditor {
   }
 
   deleteEntry(entry) {
+    if (entry?.kind === "coreEntity") {
+      this.getRegistry()?.delete?.(entry.id, true);
+      return;
+    }
     if (entry.kind === "component") {
       this.pushUnique(this.edits.deletedComponentIds, entry.component.id);
       this.removeValue(this.edits.hiddenComponentIds, entry.component.id);
@@ -1050,27 +1300,37 @@ class CADEntityLayerEditor {
   }
 
   restoreAllEdits() {
-    this.saveSnapshot(); // حفظ قبل استرجاع الكل لتمكين التراجع
+    // Restore All is treated as a clean reset, not as another undoable edit.
+    // This avoids the confusing "Undo last operation" button appearing after a full reset.
     this.edits = this.emptyEdits();
     this.saveEdits();
+    this.getRegistry()?.restoreAll?.();
+    this.getScreenSelectionBridge()?.applyVisibilityToScene?.();
+
     const scene = this.getScene();
+    const managedRenderActive = this.getEntityRenderBridge()?.enabled === true;
     scene?.traverse?.((obj) => {
-      if (!obj || !obj.userData) return;
+      if (!this.shouldTouchSceneObjectForEdits(obj)) return;
       if (obj.userData.__sourceOriginalLayer) this.applyLayer(obj, obj.userData.__sourceOriginalLayer);
       delete obj.userData.__entityHidden;
       delete obj.userData.__entityDeleted;
       delete obj.userData.__entityEditorHiddenComponentIds;
       delete obj.userData.__entityEditorDeletedComponentIds;
       delete obj.userData.__entityEditorComponentLayerMap;
-      obj.visible = true;
+
       if (this.isSegmentedObject(obj) && obj.userData.__entityEditorOriginalGeometry) {
         obj.geometry?.dispose?.();
         obj.geometry = obj.userData.__entityEditorOriginalGeometry.clone();
         const model = this.ensureComponentModel(obj);
         obj.userData.__entityEditorDisplayMap = model?.segments?.map((s) => s.idx) || [];
       }
+
+      // If the managed per-entity renderer is active, the original x-viewer objects must stay hidden.
+      obj.visible = managedRenderActive && obj.userData.__essamManagedOriginalVisible !== undefined ? false : true;
     });
+
     this.clearSelection();
+    this.clearHistory();
     this.afterSceneMutation();
   }
 
@@ -1082,13 +1342,18 @@ class CADEntityLayerEditor {
   }
 
   afterSceneMutation() {
+    this.getEntityRenderBridge()?.rebuild?.();
+    this.getScreenSelectionBridge()?.syncSelectionHighlights?.();
     this.refreshLayerOptions();
     window.dispatchEvent(new CustomEvent("cad:source-entities-updated"));
+    window.dispatchEvent(new CustomEvent("cad:entity-registry-updated", { detail: { registry: this.getRegistry?.() } }));
     this.updateSelectionInfo();
   }
 
   onFileLoaded() {
     this.fileName = this.getCurrentFileName();
+    this.getScreenSelectionBridge();
+    this.getEntityRenderBridge();
     this.loadEdits(this.fileName);
     clearTimeout(this.refreshTimer);
     this.refreshTimer = setTimeout(() => {
@@ -1097,16 +1362,22 @@ class CADEntityLayerEditor {
     }, 220);
   }
 
-  applyEditsToScene() {
+  shouldTouchSceneObjectForEdits(obj) {
+    if (!obj || !obj.userData) return false;
+    if (obj.userData.__essamManagedEntityRender || obj.userData.__essamManagedEntityRoot || obj.userData.__essamCoreSelectionOverlay || obj.userData.__entityEditorIgnore) return false;
+    if (!(obj.isLine || obj.isLineSegments || obj.isLineLoop || obj.isMesh)) return false;
+    if (!obj.geometry?.attributes?.position && !obj.userData.__entityEditorOriginalGeometry) return false;
+    return this.hasSourceLayer(obj) || obj.userData.__entityHidden || obj.userData.__entityDeleted || obj.userData.__entityEditorOriginalGeometry;
+  }
+
+  applyEditsToScene(options = {}) {
     const scene = this.getScene();
     if (!scene) return;
     const hiddenSet = new Set(this.edits.hiddenIds || []);
     const deletedSet = new Set(this.edits.deletedIds || []);
     scene.updateMatrixWorld?.(true);
     scene.traverse?.((obj) => {
-      if (!obj || !(obj.isLine || obj.isLineSegments || obj.isLineLoop || obj.isMesh)) return;
-      if (!obj.geometry?.attributes?.position && !obj.userData?.__entityEditorOriginalGeometry) return;
-      if (!this.hasSourceLayer(obj)) return;
+      if (!this.shouldTouchSceneObjectForEdits(obj)) return;
       const id = this.getStableObjectId(obj);
       const originalLayer = obj.userData?.__sourceOriginalLayer || this.resolveLayerName(obj);
       if (!id || !originalLayer) return;
@@ -1128,6 +1399,10 @@ class CADEntityLayerEditor {
 
       delete obj.userData.__entityHidden;
       delete obj.userData.__entityDeleted;
+      if (this.getEntityRenderBridge()?.enabled === true && obj.userData.__essamManagedOriginalVisible !== undefined) {
+        obj.visible = false;
+        return;
+      }
       if (this.isSegmentedObject(obj)) this.rebuildObjectDisplay(obj);
       else obj.visible = true;
     });

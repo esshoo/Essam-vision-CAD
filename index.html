@@ -61,7 +61,17 @@
 
   <script type="module" src="./addons/cad-toolkit/ui/SettingsPanel.js"></script>
 
+  <!-- V18: prevents empty CADLayerKit extractions from replacing a valid EntityRegistry -->
+  <script type="module" src="./addons/cad-toolkit/core/EmptyExtractionGuard.js"></script>
+  <script type="module" src="./addons/cad-toolkit/core/PdfGeometryRefreshBridge.js"></script>
+  <script type="module" src="./addons/cad-toolkit/core/PdfPageLifecycleManager.js"></script>
+  <script type="module" src="./addons/cad-toolkit/core/V21PerformanceStabilizer.js"></script>
+  <script type="module" src="./addons/cad-toolkit/core/LayerVisibilityPerformancePatch.js"></script>
+  <script type="module" src="./addons/cad-toolkit/core/Layer3DVisibilityPatch.js"></script>
   <!-- Draggable/resizable Rules panel (hidden until opened) -->
+  <script type="module" src="./addons/essam-core/v23/bootstrap/V23DocumentPackageBootstrap.js"></script>
+  <script type="module" src="./addons/essam-core/v24/bootstrap/V24SvgRendererBootstrap.js"></script>
+  <script type="module" src="./addons/essam-core/v25/bootstrap/V25DeltaEditBootstrap.js"></script>
   <script type="module" src="./addons/cad-toolkit/ui/LayerRulesPanel.js"></script>
   <script type="module" src="./addons/cad-toolkit/ui/NativeToolbarBridge.js"></script>
   <!-- Pen / annotations overlay -->

@@ -5,7 +5,10 @@
  */
 import { CADLayerKit, LayerRulesStore } from "../CADLayerKit.js";
 import { CADSceneExporter } from "../CADSceneExporter.js";
+import { ProjectExporter } from "../core/ProjectExporter.js";
+import { ProjectPersistence } from "../core/ProjectPersistence.js";
 import { t } from "../core/i18n.js";
+import { classifyLayerName } from "../core/SemanticLayerClassifier.js";
 import { el } from "./shared/dom.js";
 import { panelStyle, headerStyle, titleStyle, subtitleStyle, compactButtonStyle, inputStyle, sectionStyle, labelStyle } from "./shared/uiTheme.js";
 
@@ -69,6 +72,11 @@ function ensurePanel() {
         btn("📥 " + t("layers.exportJson", "تصدير JSON"), exportFinalJSON),
         btn("🚀 " + t("layers.preview3d", "عرض 3D"), preview3D, "primary")
     ]),
+    el("div", { style: { display: "flex", gap: "5px" }}, [
+        btn("📄 PDF", exportCurrentPDF),
+        btn("📐 DXF", exportCurrentDXF),
+        btn("🏗️ DWG", exportCurrentDWG)
+    ]),
 
     el("input", { 
         type: "search",
@@ -102,6 +110,9 @@ function ensurePanel() {
 
   window.addEventListener("cad:pen-layer-updated", () => refreshFromViewer());
   window.addEventListener("cad:annotation-layers-updated", () => refreshFromViewer());
+  window.addEventListener("cad:content-recognition-ready", () => refreshFromViewer());
+  window.addEventListener("cad:entity-registry-updated", () => refreshFromViewer());
+  window.addEventListener("cad:project-state-restored", () => refreshFromViewer());
 }
 
 function makeDraggable(target, handle) {
@@ -145,19 +156,18 @@ function makeDraggable(target, handle) {
 }
 
 function loadRules() { state.rules = LayerRulesStore.load(PROJECT_ID); }
-function saveRules() { LayerRulesStore.save(PROJECT_ID, state.rules); }
+function saveRules() {
+  LayerRulesStore.save(PROJECT_ID, state.rules);
+  ProjectPersistence.save({
+    fileName: getActiveFileName(),
+    registry: window.__essamEntityRegistry || null,
+    rules: state.rules,
+    settings: globalSettings,
+  });
+}
 
 function detectType(name) {
-    const n = name.toLowerCase();
-    if (n.includes("wall") || n.includes("mur")) return "walls";
-    if (n.includes("glass") || n.includes("win")) return "glass";
-    if (n.includes("door")) return "door";
-    if (n.includes("floor") || n.includes("sol")) return "floor";
-    if (n.includes("ceil")) return "ceiling";
-    if (n.includes("beam")) return "beams";
-    if (n.includes("light") || n.includes("lum")) return "lights";
-    if (n.includes("dim") || n.includes("text") || n.includes("hatch")) return "hide";
-    return "lines";
+    return classifyLayerName(name);
 }
 
 function ensureDefaults(layers) {
@@ -175,6 +185,8 @@ function ensureDefaults(layers) {
 
 function getDefaultsForType(type) {
     if(type === "walls") return { height: 3.0, thickness: 0.2, elevation: 0.0, hasCeiling: false };
+    if(type === "columns") return { height: 3.0, thickness: 0.35, elevation: 0.0 };
+    if(type === "furniture") return { height: 0.75, thickness: 0.08, elevation: 0.0 };
     if(type === "beams") return { height: 0.5, thickness: 0.2, elevation: 2.5 };
     if(type === "floor") return { thickness: 0.1, elevation: 0.0 };
     if(type === "ceiling") return { thickness: 0.1, elevation: 3.0 };
@@ -202,19 +214,86 @@ function getAnnotationLayerNames() {
 }
 
 function applyViewerLayerVisibility(layerName, visible) {
-  const scene = window.cadApp?.viewer?.sceneManager?.scene || window.cadApp?.viewer?.scene;
-  if (!scene || !layerName) return;
-  scene.traverse?.((obj) => {
-    const n = obj?.userData?.layer ?? obj?.userData?.layerName ?? obj?.userData?.dxfLayer ?? obj?.name;
-    if (typeof n === 'string' && n.trim() === layerName) obj.visible = visible !== false;
-  });
-  if (window.cadDrawingOverlay?.getLayerMeta?.(layerName)) {
-    window.cadDrawingOverlay?.setLayerVisibility?.(layerName, visible !== false, true);
+  const app = window.cadApp;
+  const viewer = app?.viewer;
+  const isVisible = visible !== false;
+  if (!viewer || !layerName) return;
+
+  // Annotation/drawing layers are runtime layers, not x-viewer modelData layers.
+  if (isAnnotationLayer(layerName)) {
+    window.cadDrawingOverlay?.setLayerVisibility?.(layerName, isVisible, true);
+    viewer?.enableRender?.();
+    return;
   }
-  window.cadApp?.viewer?.enableRender?.();
+
+  const registry = window.__essamEntityRegistry || null;
+  if (registry?.findLayerId?.(layerName)) {
+    registry.hideLayer?.(layerName, !isVisible);
+    window.cadEntityLayerEditor?.syncManagedRenderAfterStateChange?.();
+    window.__essamScreenSelectionBridge?.syncSelectionHighlights?.();
+    ProjectPersistence.save({ fileName: getActiveFileName(), registry, rules: state.rules, settings: globalSettings });
+  }
+
+  try {
+    const models = Array.isArray(viewer.loadedModels) ? viewer.loadedModels : [];
+    for (const model of models) {
+      if (typeof model?.setLayerVisible === "function" && modelHasLayer(model, layerName)) {
+        try { model.setLayerVisible(layerName, isVisible); } catch (_) {}
+      }
+    }
+  } catch (_) {}
+
+  const scene = viewer?.sceneManager?.scene || viewer?.scene;
+  if (scene) {
+    scene.traverse?.((obj) => {
+      if (obj?.userData?.__essamManagedEntityRender || obj?.userData?.__essamCoreSelectionOverlay) return;
+      const n = obj?.userData?.layer ?? obj?.userData?.layerName ?? obj?.userData?.dxfLayer ?? obj?.name;
+      if (typeof n === "string" && n.trim() === layerName) obj.visible = isVisible;
+    });
+  }
+
+  viewer?.enableRender?.();
+}
+
+function isAnnotationLayer(layerName) {
+  if (!layerName) return false;
+  if (window.cadDrawingOverlay?.getLayerMeta?.(layerName)) return true;
+  return /^\s*(✏️|🖍️|🧽|📐|⬛|⚪|🔤|Annotation|تعليق|رسم)/i.test(String(layerName));
+}
+
+function modelHasLayer(model, layerName) {
+  const layers = Array.isArray(model?.layers) ? model.layers : [];
+  const target = String(layerName || "").trim();
+  return layers.some((layer) => {
+    if (typeof layer === "string") return layer.trim() === target;
+    const name = layer?.name ?? layer?.id ?? layer?.layerName;
+    return String(name || "").trim() === target;
+  });
+}
+
+function getActiveFileName() {
+  return window.cadApp?.uploader?.file?.name || currentFileName || "Project";
 }
 
 function getMergedRawData() {
+  const registry = window.__essamEntityRegistry || null;
+  if (registry?.getAll) {
+    const annotationEntities = getAnnotationLayerEntities();
+    const annotationLayers = getAnnotationLayerNames();
+    const layerSet = new Set(registry.getLayerNames?.() || []);
+    annotationLayers.forEach((name) => layerSet.add(name));
+    return {
+      source: "entity-registry",
+      layers: Array.from(layerSet),
+      entities: [
+        ...registry.getAll({ includeDeleted: true }),
+        ...annotationEntities,
+      ],
+      documentModel: window.__essamDocumentModel || null,
+      entityRegistry: registry,
+    };
+  }
+
   if (!window.cadApp?.viewer) return { layers: [], entities: [] };
   const rawData = CADLayerKit.extractFromViewer(window.cadApp.viewer);
   const annotationEntities = getAnnotationLayerEntities();
@@ -226,6 +305,18 @@ function getMergedRawData() {
     layers: Array.from(layerSet),
     entities: [...(Array.isArray(rawData.entities) ? rawData.entities : []), ...annotationEntities],
   };
+}
+
+function getVisibleExportEntities() {
+  const rawData = getMergedRawData();
+  return (rawData.entities || []).filter((item) => {
+    if (!item) return false;
+    if (item.deleted === true || item.visible === false) return false;
+    const layer = item.layer || "0";
+    const rule = state.rules[layer];
+    if (rule?.visible === false || rule?.type === "hide") return false;
+    return true;
+  });
 }
 
 let isRefreshing = false; // القفل اللي هيمنع الحلقة المفرغة
@@ -254,7 +345,8 @@ function refreshFromViewer() {
         }
       });
       
-      state.layers.forEach((name) => applyViewerLayerVisibility(name, state.rules[name]?.visible !== false));
+      // Refresh is read-only. It must not push runtime layers back into x-viewer
+      // and must not overwrite EntityRegistry edits.
       renderList();
       
   } finally {
@@ -266,8 +358,7 @@ function refreshFromViewer() {
 function exportFinalJSON() {
   saveRules();
   if (!window.cadApp?.viewer) return;
-  const rawData = getMergedRawData();
-  const visibleEntities = (rawData.entities || []).filter((item) => state.rules[item.layer]?.visible !== false);
+  const visibleEntities = getVisibleExportEntities();
   const finalScene = CADSceneExporter.export(
       visibleEntities, state.rules, 
       { fileName: currentFileName, scale: globalSettings.scale }
@@ -283,13 +374,30 @@ function exportFinalJSON() {
 function preview3D() {
   saveRules();
   if (!window.cadApp?.viewer) return;
-  const rawData = getMergedRawData();
-  const visibleEntities = (rawData.entities || []).filter((item) => state.rules[item.layer]?.visible !== false);
+  const visibleEntities = getVisibleExportEntities();
   const finalScene = CADSceneExporter.export(
       visibleEntities, state.rules, 
       { fileName: currentFileName, scale: globalSettings.scale }
   );
   if (window.cad3dOpen) window.cad3dOpen(finalScene);
+}
+
+function exportCurrentDXF() {
+  saveRules();
+  const entities = getVisibleExportEntities();
+  ProjectExporter.exportDXF({ entities, fileName: currentFileName, rules: state.rules });
+}
+
+async function exportCurrentPDF() {
+  saveRules();
+  const entities = getVisibleExportEntities();
+  await ProjectExporter.exportPDF({ entities, fileName: currentFileName, rules: state.rules });
+}
+
+function exportCurrentDWG() {
+  saveRules();
+  const entities = getVisibleExportEntities();
+  ProjectExporter.exportDWG({ entities, fileName: currentFileName, rules: state.rules });
 }
 
 function renderList() {
@@ -318,7 +426,7 @@ function typeSelect(layer, rule) {
         Object.assign(rule, getDefaultsForType(rule.type));
         saveRules(); renderList(); 
     }});
-    const opts = [["lines",t("layerTypes.lines","خطوط")],["walls",t("layerTypes.walls","حوائط")],["floor",t("layerTypes.floor","أرضية")],["ceiling",t("layerTypes.ceiling","سقف")],["beams",t("layerTypes.beams","كمرة")],["lights",t("layerTypes.lights","إضاءة")],["glass",t("layerTypes.glass","زجاج")],["door",t("layerTypes.door","باب/نافذة")],["hide",t("layerTypes.hide","إخفاء")]];
+    const opts = [["lines",t("layerTypes.lines","خطوط")],["walls",t("layerTypes.walls","حوائط")],["columns",t("layerTypes.columns","أعمدة")],["floor",t("layerTypes.floor","أرضية")],["ceiling",t("layerTypes.ceiling","سقف")],["beams",t("layerTypes.beams","كمرة")],["lights",t("layerTypes.lights","إضاءة")],["glass",t("layerTypes.glass","زجاج")],["door",t("layerTypes.door","باب/نافذة")],["furniture",t("layerTypes.furniture","فرش")],["hide",t("layerTypes.hide","إخفاء")]];
     opts.forEach(([v,l]) => {
         const o = document.createElement("option"); o.value = v; o.text = l; if(rule.type===v) o.selected=true; sel.appendChild(o);
     });
@@ -347,6 +455,8 @@ function paramsRow(layer, rule) {
         const chk = el("input", { type: "checkbox", checked: !!rule.hasCeiling, onchange: (e) => { rule.hasCeiling = e.target.checked; } });
         c.appendChild(el("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", marginLeft: "auto" }}, [el("span", { style: { fontSize: "9px", color: "rgba(255,255,255,0.62)" }}, [t("layers.autoCeil","سقف تلقائي")]), chk]));
     }
+    else if(rule.type === "columns") { inp(t("layers.height","الارتفاع"), "height"); inp(t("layers.thickness","السماكة"), "thickness"); inp(t("layers.elevation","المنسوب"), "elevation"); }
+    else if(rule.type === "furniture") { inp(t("layers.height","الارتفاع"), "height", "0.75"); inp(t("layers.width","العرض"), "thickness", "0.08"); inp(t("layers.elevation","المنسوب"), "elevation"); }
     else if(rule.type === "lights") { inp(t("layers.elevation","المنسوب"), "elevation"); inp(t("layers.width","العرض"), "thickness"); inp(t("layers.intensity","الشدة"), "intensity", "2.0"); inp(t("layers.range","المدى"), "range", "8.0"); inp(t("layers.spacing","التباعد"), "lightSpacing", "2.4"); }
     else if(rule.type === "beams") { inp(t("layers.elevation","المنسوب"), "elevation"); inp(t("layers.depth","العمق"), "height"); inp(t("layers.width","العرض"), "thickness"); }
     else if(rule.type === "door" || rule.type === "glass") { inp(t("layers.sill","العتبة"), "elevation"); inp(t("layers.height","الارتفاع"), "height"); }

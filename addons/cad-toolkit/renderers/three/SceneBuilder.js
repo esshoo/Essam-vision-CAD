@@ -1,4 +1,4 @@
-// SceneBuilder.js (Performance Optimized + Lighting Ready)
+// SceneBuilder.js (V31 Fast Runtime + Light Type Fix)
 import { THREE, THREEAddons } from '@x-viewer/core';
 import { GeometryPreprocessor } from './GeometryPreprocessor.js';
 
@@ -12,10 +12,52 @@ export class SceneBuilder {
         this.preprocessor = new GeometryPreprocessor();
         this.snapPointKeys = new Set();
         this.lightCandidates = [];
+        this.massiveBuild = false;
+        this.buildConfig = {
+            massiveEntityThreshold: 30000,
+            maxSnapPoints: this.isMobileOrVR() ? 6000 : 16000,
+            disableSnapPointsForMassive: true,
+            maxLightCandidates: this.isMobileOrVR() ? 180 : 650,
+            skipPerGeometryNormals: true,
+            computeMergedNormalsIfMissing: false,
+            disableShadowsForMassive: true,
+            disposePreviousGroup: true,
+            gridDivisionsMassiveCap: 80,
+            ...(window.__essamSceneBuilderConfig || {}),
+        };
+        this.lastBuildTimings = null;
+    }
+
+    normalizeType(config = {}) {
+        const t = String(config?.type || 'lines').toLowerCase();
+        if (t === 'light') return 'lights';
+        if (t === 'beam') return 'beams';
+        if (t === 'wall') return 'walls';
+        if (t === 'column') return 'columns';
+        return t;
+    }
+
+    isLightConfig(config = {}) {
+        return this.normalizeType(config) === 'lights' || config?.isLight === true;
+    }
+
+    isMobileOrVR() {
+        try {
+            const ua = navigator.userAgent || '';
+            if (/Quest|Oculus|VR|XR/i.test(ua)) return true;
+            if (/Android|iPhone|iPad|Mobile/i.test(ua)) return true;
+            if (window.__essamModeTransitionManager?.getSummary?.()?.currentMode === 'vr') return true;
+            if (navigator.xr && window.__essamPreferMobile3DProfile === true) return true;
+        } catch (_) {}
+        return false;
     }
 
     build(data, layerConfig, globalSettings, forcedScale = 1.0) {
-        if (this.roomGroup) this.scene.remove(this.roomGroup);
+        const tBuildStart = performance?.now?.() || Date.now();
+        if (this.roomGroup) {
+            this.scene.remove(this.roomGroup);
+            if (this.buildConfig.disposePreviousGroup) this.disposeObjectTree(this.roomGroup);
+        }
         this.roomGroup = new THREE.Group();
         this.roomGroup.name = 'cad-room-group';
         this.snapPoints = [];
@@ -23,7 +65,10 @@ export class SceneBuilder {
         this.lightCandidates = [];
 
         const rawEntities = data.entities || [];
+        const tPre = performance?.now?.() || Date.now();
         const { entities, stats } = this.preprocessor.preprocessEntities(rawEntities);
+        const preMs = Math.round((performance?.now?.() || Date.now()) - tPre);
+        this.massiveBuild = entities.length > this.buildConfig.massiveEntityThreshold;
 
         let currentHeight = globalSettings.height || 3.0;
         for (const layerName in layerConfig) {
@@ -39,13 +84,17 @@ export class SceneBuilder {
 
         this.buildCeilingGrid(currentHeight, bounds);
 
+        const tLoop = performance?.now?.() || Date.now();
+
         const materialsCache = new Map();
         const meshBatches = new Map();
         const lineBatches = new Map();
 
         entities.forEach((entity) => {
             const config = this.resolveConfig(layerConfig[entity.layer]);
-            if (config.type === 'hide') return;
+            const configType = this.normalizeType(config);
+            config.type = configType;
+            if (configType === 'hide') return;
 
             const material = this.getOrCreateMaterial(materialsCache, entity.layer, config);
             const ctx = {
@@ -63,12 +112,12 @@ export class SceneBuilder {
             const verts = entity.points || entity.vertices;
             if (!verts || verts.length < 2) return;
 
-            if (config.type === 'lights' || config.isLight) {
+            if (this.isLightConfig(config)) {
                 this.processLightEntity(verts, ctx, entity);
                 return;
             }
 
-            if ((config.type === 'floor' || config.type === 'ceiling') && (entity.closed || entity.shape) && verts.length >= 3) {
+            if ((configType === 'floor' || configType === 'ceiling') && (entity.closed || entity.shape) && verts.length >= 3) {
                 this.processSurfaceEntity(verts, ctx, entity);
             }
 
@@ -80,8 +129,12 @@ export class SceneBuilder {
             }
         });
 
+        const loopMs = Math.round((performance?.now?.() || Date.now()) - tLoop);
+
+        const tFlush = performance?.now?.() || Date.now();
         this.flushMeshBatches(meshBatches);
         this.flushLineBatches(lineBatches);
+        const flushMs = Math.round((performance?.now?.() || Date.now()) - tFlush);
 
         this.roomGroup.userData.buildStats = {
             ...stats,
@@ -89,12 +142,21 @@ export class SceneBuilder {
             lineBatchCount: lineBatches.size,
             snapPoints: this.snapPoints.length,
             lightCandidates: this.lightCandidates.length,
+            massiveBuild: this.massiveBuild,
+            timings: {
+                preprocessMs: preMs,
+                entityLoopMs: loopMs,
+                flushMs,
+                totalMs: Math.round((performance?.now?.() || Date.now()) - tBuildStart),
+            },
         };
+        this.lastBuildTimings = this.roomGroup.userData.buildStats.timings;
         this.roomGroup.userData.bounds = bounds;
 
         this.scene.add(this.roomGroup);
 
-        console.info('[SceneBuilder] Optimized build stats:', this.roomGroup.userData.buildStats);
+        try { window.__essamLastSceneBuilderStats = this.roomGroup.userData.buildStats; } catch (_) {}
+        console.info('[SceneBuilder V31] Fast build stats:', this.roomGroup.userData.buildStats);
 
         return {
             roomGroup: this.roomGroup,
@@ -107,7 +169,7 @@ export class SceneBuilder {
     }
 
     getOrCreateMaterial(cache, layerName, config) {
-        const matKey = `${layerName}-${config.type || 'default'}-${config.color || '#cccccc'}-${config.opacity ?? ''}-${config.emissive ?? ''}`;
+        const matKey = `${layerName}-${this.normalizeType(config) || 'default'}-${config.color || '#cccccc'}-${config.opacity ?? ''}-${config.emissive ?? ''}`;
         if (!cache.has(matKey)) {
             cache.set(matKey, this.createMaterial(config));
         }
@@ -183,6 +245,7 @@ export class SceneBuilder {
 
             let cursor = carry;
             while (cursor <= dist) {
+                if (this.lightCandidates.length >= this.buildConfig.maxLightCandidates) return;
                 this.lightCandidates.push({
                     type: 'point',
                     x: x1 + dirX * cursor,
@@ -208,7 +271,7 @@ export class SceneBuilder {
 
         if (!added && verts[0]) {
             const p = verts[0];
-            this.lightCandidates.push({
+            if (this.lightCandidates.length < this.buildConfig.maxLightCandidates) this.lightCandidates.push({
                 type: 'point',
                 x: (p.x * ctx.scale) - ctx.cx,
                 y: (ctx.config.elevation ?? ctx.height) - drop,
@@ -271,7 +334,7 @@ export class SceneBuilder {
         const dist = Math.hypot(dx, dz);
         if (dist <= 0.01) return;
 
-        if (config.type === 'lights' || config.isLight) {
+        if (this.isLightConfig(config)) {
             const elev = config.elevation ?? height;
             const geo = new THREE.BoxGeometry(0.1, 0.05, dist);
             this.transformSegmentGeometry(geo, x1, z1, x2, z2, elev);
@@ -279,15 +342,15 @@ export class SceneBuilder {
             return;
         }
 
-        if (config.type === 'wall' || config.type === 'walls' || config.type === 'glass' || config.type === 'beams') {
+        if (this.normalizeType(config) === 'walls' || this.normalizeType(config) === 'glass' || this.normalizeType(config) === 'beams') {
             const h = config.height || height;
             const el = config.elevation || 0;
             const th = config.thickness || thickness;
             const geo = new THREE.BoxGeometry(th, h, dist);
             this.transformSegmentGeometry(geo, x1, z1, x2, z2, el + (h / 2));
-            this.addMeshGeometry(meshBatches, material, geo, `${config.type}-${material.uuid}`);
+            this.addMeshGeometry(meshBatches, material, geo, `${this.normalizeType(config)}-${material.uuid}`);
 
-            if (config.type !== 'glass') {
+            if (this.normalizeType(config) !== 'glass') {
                 this.addSnapPoint(x1, el, z1);
                 this.addSnapPoint(x1, el + h, z1);
                 this.addSnapPoint(x2, el, z2);
@@ -296,8 +359,8 @@ export class SceneBuilder {
             return;
         }
 
-        if (config.type === 'floor' || config.type === 'ceiling') {
-            const y = config.elevation ?? (config.type === 'ceiling' ? height : 0.05);
+        if (this.normalizeType(config) === 'floor' || this.normalizeType(config) === 'ceiling') {
+            const y = config.elevation ?? (this.normalizeType(config) === 'ceiling' ? height : 0.05);
             this.addLineSegment(lineBatches, material, x1, y, z1, x2, y, z2);
         }
     }
@@ -315,7 +378,9 @@ export class SceneBuilder {
     }
 
     addMeshGeometry(batches, material, geometry, batchKey) {
-        geometry.computeVertexNormals();
+        if (!this.buildConfig.skipPerGeometryNormals && !geometry.getAttribute('normal')) {
+            geometry.computeVertexNormals();
+        }
         if (!batches.has(batchKey)) {
             batches.set(batchKey, { material, geometries: [] });
         }
@@ -333,6 +398,14 @@ export class SceneBuilder {
 
     markMeshShadows(mesh, material) {
         const role = material.userData?.shadowRole || 'solid';
+        if (this.massiveBuild && this.buildConfig.disableShadowsForMassive) {
+            mesh.userData.shadowRole = role;
+            mesh.userData.allowCastShadow = false;
+            mesh.userData.allowReceiveShadow = role !== 'light';
+            mesh.castShadow = false;
+            mesh.receiveShadow = role !== 'light';
+            return;
+        }
         mesh.userData.shadowRole = role;
         if (role === 'glass') {
             mesh.userData.allowCastShadow = false;
@@ -367,6 +440,12 @@ export class SceneBuilder {
             const merged = batch.geometries.length === 1
                 ? batch.geometries[0]
                 : BufferGeometryUtils.mergeGeometries(batch.geometries, false);
+            if (this.buildConfig.computeMergedNormalsIfMissing && merged && !merged.getAttribute('normal')) {
+                merged.computeVertexNormals();
+            }
+            if (batch.geometries.length > 1) {
+                for (const g of batch.geometries) { if (g !== merged) g.dispose?.(); }
+            }
             const mesh = new THREE.Mesh(merged, batch.material);
             this.markMeshShadows(mesh, batch.material);
             this.roomGroup.add(mesh);
@@ -386,6 +465,8 @@ export class SceneBuilder {
     }
 
     addSnapPoint(x, y, z) {
+        if (this.massiveBuild && this.buildConfig.disableSnapPointsForMassive) return;
+        if (this.snapPoints.length >= this.buildConfig.maxSnapPoints) return;
         const key = `${x.toFixed(4)}|${y.toFixed(4)}|${z.toFixed(4)}`;
         if (this.snapPointKeys.has(key)) return;
         this.snapPointKeys.add(key);
@@ -399,7 +480,8 @@ export class SceneBuilder {
         const spanX = Math.max(10, bounds.maxX - bounds.minX);
         const spanY = Math.max(10, bounds.maxY - bounds.minY);
         const size = Math.max(50, Math.ceil(Math.max(spanX, spanY) * 1.25));
-        const divisions = Math.max(10, Math.min(300, Math.round(size / 2)));
+        let divisions = Math.max(10, Math.min(300, Math.round(size / 2)));
+        if (this.massiveBuild) divisions = Math.min(divisions, this.buildConfig.gridDivisionsMassiveCap);
 
         const ceilGrid = new THREE.GridHelper(size, divisions, 0x444444, 0x222222);
         ceilGrid.position.y = height;
@@ -409,7 +491,7 @@ export class SceneBuilder {
 
     createMaterial(config) {
         const color = config.color || '#cccccc';
-        if (config.type === 'lights' || config.isLight) {
+        if (this.isLightConfig(config)) {
             const mat = new THREE.MeshStandardMaterial({
                 color,
                 emissive: color,
@@ -420,7 +502,7 @@ export class SceneBuilder {
             return mat;
         }
 
-        if (config.type === 'glass') {
+        if (this.normalizeType(config) === 'glass') {
             const mat = new THREE.MeshStandardMaterial({
                 color,
                 transparent: true,
@@ -433,10 +515,10 @@ export class SceneBuilder {
             return mat;
         }
 
-        if (config.type === 'floor' || config.type === 'ceiling') {
+        if (this.normalizeType(config) === 'floor' || this.normalizeType(config) === 'ceiling') {
             const mat = new THREE.MeshStandardMaterial({
                 color,
-                roughness: config.type === 'floor' ? 0.92 : 0.85,
+                roughness: this.normalizeType(config) === 'floor' ? 0.92 : 0.85,
                 metalness: 0.02,
                 transparent: true,
                 opacity: config.opacity ?? 0.8,
@@ -454,6 +536,30 @@ export class SceneBuilder {
         });
         mat.userData.shadowRole = 'solid';
         return mat;
+    }
+
+    disposeObjectTree(root) {
+        try {
+            root?.traverse?.((obj) => {
+                if (obj.geometry) obj.geometry.dispose?.();
+                const mat = obj.material;
+                if (Array.isArray(mat)) mat.forEach((m) => m?.dispose?.());
+                else mat?.dispose?.();
+            });
+        } catch (_) {}
+    }
+
+    getPerformanceSummary() {
+        return {
+            installed: true,
+            version: 'V31',
+            massiveBuild: this.massiveBuild,
+            lastBuildTimings: this.lastBuildTimings,
+            snapPoints: this.snapPoints?.length || 0,
+            lightCandidates: this.lightCandidates?.length || 0,
+            config: { ...this.buildConfig },
+            buildStats: this.roomGroup?.userData?.buildStats || null,
+        };
     }
 
     fitCamera(camera, controls) {
